@@ -1,0 +1,12 @@
+.git/
+.gitignore
+.gradle/
+build/
+.idea/
+*.iml
+*.md
+.env
+.env.*
+docker-compose.override.yml
+.claude/
+.DS_Store
