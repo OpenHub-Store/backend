@@ -3,15 +3,12 @@ package zed.rainxch.githubstore.routes
 import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.RepoRepository
 
 private val VALID_BUCKETS = setOf("privacy", "media", "productivity", "networking", "dev-tools")
 private val VALID_PLATFORMS = setOf("android", "windows", "macos", "linux")
 
-fun Route.topicRoutes() {
-    val repoRepository by inject<RepoRepository>()
-
+fun Route.topicRoutes(repoRepository: RepoRepository) {
     get("/topics/{bucket}/{platform}") {
         val bucket = call.parameters["bucket"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing bucket")

@@ -2,15 +2,19 @@ package zed.rainxch.githubstore.db
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.slf4j.LoggerFactory
 
 object DatabaseFactory {
 
+    private val log = LoggerFactory.getLogger(DatabaseFactory::class.java)
+
     fun init() {
         val dataSource = hikari()
-        runMigrations(dataSource)
         Database.connect(dataSource)
+        runMigrations()
+        log.info("Database initialized successfully")
     }
 
     private fun hikari(): HikariDataSource {
@@ -19,7 +23,7 @@ object DatabaseFactory {
             jdbcUrl = env("DATABASE_URL", "jdbc:postgresql://localhost:5432/githubstore")
             username = env("DATABASE_USER", "githubstore")
             password = env("DATABASE_PASSWORD", "githubstore")
-            maximumPoolSize = env("DATABASE_POOL_SIZE", "9").toInt() // (2 * 4 vCPU) + 1
+            maximumPoolSize = env("DATABASE_POOL_SIZE", "9").toInt()
             isAutoCommit = false
             connectionTimeout = 5_000
             validationTimeout = 3_000
@@ -29,12 +33,27 @@ object DatabaseFactory {
         return HikariDataSource(config)
     }
 
-    private fun runMigrations(dataSource: HikariDataSource) {
-        Flyway.configure()
-            .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .load()
-            .migrate()
+    private fun runMigrations() {
+        transaction {
+            log.info("Running database migrations...")
+            val migrationSql = this::class.java.classLoader
+                .getResourceAsStream("db/migration/V1__initial_schema.sql")
+                ?.bufferedReader()?.readText()
+                ?: error("Migration file not found")
+
+            // Check if schema already exists
+            val tablesExist = exec("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'repos')") { rs ->
+                rs.next() && rs.getBoolean(1)
+            } ?: false
+
+            if (!tablesExist) {
+                log.info("Applying initial schema migration...")
+                exec(migrationSql)
+                log.info("Schema migration applied successfully")
+            } else {
+                log.info("Schema already exists, skipping migration")
+            }
+        }
     }
 
     private fun env(name: String, default: String): String =

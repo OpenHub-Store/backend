@@ -19,7 +19,6 @@ val ktorVersion = "3.1.2"
 val exposedVersion = "0.60.0"
 val koinVersion = "4.0.4"
 val logbackVersion = "1.5.18"
-val flywayVersion = "11.5.0"
 
 dependencies {
     // Ktor server
@@ -49,9 +48,6 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.5")
     implementation("com.zaxxer:HikariCP:6.3.0")
 
-    // Flyway migrations
-    implementation("org.flywaydb:flyway-core:$flywayVersion")
-    implementation("org.flywaydb:flyway-database-postgresql:$flywayVersion")
 
     // DI
     implementation("io.insert-koin:koin-ktor:$koinVersion")

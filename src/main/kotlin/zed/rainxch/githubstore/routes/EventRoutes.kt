@@ -4,7 +4,6 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.EventRepository
 import zed.rainxch.githubstore.model.EventRequest
 
@@ -24,9 +23,7 @@ private val VALID_EVENT_TYPES = setOf(
     "unfavorited",
 )
 
-fun Route.eventRoutes() {
-    val eventRepository by inject<EventRepository>()
-
+fun Route.eventRoutes(eventRepository: EventRepository) {
     post("/events") {
         val events = call.receive<List<EventRequest>>()
 

@@ -3,7 +3,6 @@ package zed.rainxch.githubstore.routes
 import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.model.RepoOwner
@@ -13,10 +12,7 @@ import zed.rainxch.githubstore.model.SearchResponse
 private val VALID_PLATFORMS = setOf("android", "windows", "macos", "linux")
 private val VALID_SORTS = setOf("relevance", "stars", "recent")
 
-fun Route.searchRoutes() {
-    val meilisearch by inject<MeilisearchClient>()
-    val searchRepository by inject<SearchRepository>()
-
+fun Route.searchRoutes(meilisearch: MeilisearchClient, searchRepository: SearchRepository) {
     get("/search") {
         val query = call.request.queryParameters["q"]
         if (query.isNullOrBlank()) {

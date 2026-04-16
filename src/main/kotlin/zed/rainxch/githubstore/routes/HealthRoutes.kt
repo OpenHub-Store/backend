@@ -4,13 +4,10 @@ import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.model.HealthResponse
 
-fun Route.healthRoutes() {
-    val meilisearch by inject<MeilisearchClient>()
-
+fun Route.healthRoutes(meilisearch: MeilisearchClient) {
     get("/health") {
         val postgresStatus = try {
             transaction { exec("SELECT 1") }

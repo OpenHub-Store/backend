@@ -1,0 +1,10 @@
+# Local development overrides — exposes DB/search ports to host
+# This file is auto-loaded by `docker compose up`
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  meilisearch:
+    ports:
+      - "7700:7700"

@@ -3,15 +3,12 @@ package zed.rainxch.githubstore.routes
 import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.RepoRepository
 
 private val VALID_CATEGORIES = setOf("trending", "new-releases", "most-popular")
 private val VALID_PLATFORMS = setOf("android", "windows", "macos", "linux")
 
-fun Route.categoryRoutes() {
-    val repoRepository by inject<RepoRepository>()
-
+fun Route.categoryRoutes(repoRepository: RepoRepository) {
     get("/categories/{category}/{platform}") {
         val category = call.parameters["category"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing category")

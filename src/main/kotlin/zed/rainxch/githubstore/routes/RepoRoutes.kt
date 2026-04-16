@@ -3,12 +3,9 @@ package zed.rainxch.githubstore.routes
 import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.koin.ktor.ext.inject
 import zed.rainxch.githubstore.db.RepoRepository
 
-fun Route.repoRoutes() {
-    val repoRepository by inject<RepoRepository>()
-
+fun Route.repoRoutes(repoRepository: RepoRepository) {
     get("/repo/{owner}/{name}") {
         val owner = call.parameters["owner"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing owner")
