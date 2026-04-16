@@ -11,6 +11,7 @@ fun Application.configureRouting() {
             categoryRoutes()
             topicRoutes()
             repoRoutes()
+            searchRoutes()
         }
     }
 }

@@ -32,6 +32,11 @@ dependencies {
     implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
     implementation("io.ktor:ktor-server-compression:$ktorVersion")
 
+    // Ktor client (for Meilisearch)
+    implementation("io.ktor:ktor-client-core:$ktorVersion")
+    implementation("io.ktor:ktor-client-cio:$ktorVersion")
+    implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
+
     // Serialization
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
 

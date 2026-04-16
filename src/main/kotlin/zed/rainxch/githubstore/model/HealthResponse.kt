@@ -6,5 +6,6 @@ import kotlinx.serialization.Serializable
 data class HealthResponse(
     val status: String,
     val postgres: String,
+    val meilisearch: String,
     val version: String,
 )
