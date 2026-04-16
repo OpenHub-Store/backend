@@ -8,6 +8,9 @@ fun Application.configureRouting() {
         route("/v1") {
             healthRoutes()
             eventRoutes()
+            categoryRoutes()
+            topicRoutes()
+            repoRoutes()
         }
     }
 }
