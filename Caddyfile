@@ -1,0 +1,9 @@
+# Local development: HTTP only
+# For production, replace with your domain:
+#   api.yourdomain.com {
+#       reverse_proxy app:8080
+#   }
+
+:80 {
+    reverse_proxy app:8080
+}

@@ -1,0 +1,88 @@
+package zed.rainxch.githubstore.db
+
+import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
+
+object Repos : Table("repos") {
+    val id = long("id")
+    val fullName = text("full_name")
+    val owner = text("owner")
+    val name = text("name")
+    val ownerAvatarUrl = text("owner_avatar_url").nullable()
+    val description = text("description").nullable()
+    val defaultBranch = text("default_branch").nullable()
+    val htmlUrl = text("html_url")
+    val stars = integer("stars").default(0)
+    val forks = integer("forks").default(0)
+    val language = text("language").nullable()
+    val latestReleaseDate = timestampWithTimeZone("latest_release_date").nullable()
+    val latestReleaseTag = text("latest_release_tag").nullable()
+    val hasInstallersAndroid = bool("has_installers_android").default(false)
+    val hasInstallersWindows = bool("has_installers_windows").default(false)
+    val hasInstallersMacos = bool("has_installers_macos").default(false)
+    val hasInstallersLinux = bool("has_installers_linux").default(false)
+    val installCount = integer("install_count").default(0)
+    val installSuccessRate = float("install_success_rate").nullable()
+    val viewCount7d = integer("view_count_7d").default(0)
+    val trendingScore = float("trending_score").nullable()
+    val popularityScore = float("popularity_score").nullable()
+    val createdAtGh = timestampWithTimeZone("created_at_gh").nullable()
+    val updatedAtGh = timestampWithTimeZone("updated_at_gh").nullable()
+    val indexedAt = timestampWithTimeZone("indexed_at")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object RepoCategories : Table("repo_categories") {
+    val repoId = long("repo_id").references(Repos.id)
+    val category = text("category")
+    val platform = text("platform")
+    val rank = integer("rank")
+
+    override val primaryKey = PrimaryKey(repoId, category, platform)
+}
+
+object RepoTopicBuckets : Table("repo_topic_buckets") {
+    val repoId = long("repo_id").references(Repos.id)
+    val bucket = text("bucket")
+    val platform = text("platform")
+    val rank = integer("rank")
+
+    override val primaryKey = PrimaryKey(repoId, bucket, platform)
+}
+
+object Events : Table("events") {
+    val id = long("id").autoIncrement()
+    val ts = timestampWithTimeZone("ts")
+    val deviceId = text("device_id")
+    val platform = text("platform")
+    val appVersion = text("app_version").nullable()
+    val eventType = text("event_type")
+    val repoId = long("repo_id").nullable()
+    val queryHash = text("query_hash").nullable()
+    val resultCount = integer("result_count").nullable()
+    val success = bool("success").nullable()
+    val errorCode = text("error_code").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object RepoStatsDaily : Table("repo_stats_daily") {
+    val repoId = long("repo_id").references(Repos.id)
+    val date = text("date") // DATE as text, Flyway handles the real type
+    val views = integer("views").nullable()
+    val searchesHit = integer("searches_hit").nullable()
+    val installsStarted = integer("installs_started").nullable()
+    val installsSuccess = integer("installs_success").nullable()
+
+    override val primaryKey = PrimaryKey(repoId, date)
+}
+
+object SearchMisses : Table("search_misses") {
+    val queryHash = text("query_hash")
+    val querySample = text("query_sample").nullable()
+    val missCount = integer("miss_count").default(1)
+    val lastSeenAt = timestampWithTimeZone("last_seen_at")
+
+    override val primaryKey = PrimaryKey(queryHash)
+}
