@@ -59,7 +59,7 @@ class RepoRepository {
             stargazersCount = this[Repos.stars],
             forksCount = this[Repos.forks],
             language = this[Repos.language],
-            topics = emptyList(), // topics array handled separately when needed
+            topics = this[Repos.topics],
             releasesUrl = "${this[Repos.htmlUrl]}/releases",
             updatedAt = this[Repos.updatedAtGh]?.toString(),
             createdAt = this[Repos.createdAtGh]?.toString(),

@@ -30,6 +30,7 @@ dependencies {
     implementation("io.ktor:ktor-server-cors:$ktorVersion")
     implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
     implementation("io.ktor:ktor-server-compression:$ktorVersion")
+    implementation("io.ktor:ktor-server-rate-limit:$ktorVersion")
 
     // Ktor client (for Meilisearch)
     implementation("io.ktor:ktor-client-core:$ktorVersion")

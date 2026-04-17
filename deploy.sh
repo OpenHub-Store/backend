@@ -27,6 +27,6 @@ ssh "$SSH_USER@$SERVER_IP" "cd $REMOTE_DIR && docker compose -f docker-compose.p
 
 echo "==> Waiting for health check..."
 sleep 15
-ssh "$SSH_USER@$SERVER_IP" "curl -sf http://localhost:8080/v1/health || echo 'Health check failed!'"
+ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-app-1 curl -sf http://localhost:8080/v1/health || echo 'Health check failed!'"
 
 echo "==> Deploy complete!"

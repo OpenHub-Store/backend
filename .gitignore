@@ -20,3 +20,4 @@ Thumbs.db
 # Docker volumes (shouldn't be here, but just in case)
 pgdata/
 msdata/
+video.mp4

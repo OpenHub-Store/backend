@@ -140,6 +140,7 @@ class GitHubSearchClient(
                     it[stars] = repo.stargazersCount
                     it[forks] = repo.forksCount
                     it[language] = repo.language
+                    it[topics] = repo.topics
                     it[latestReleaseDate] = r.release.publishedAt?.let {
                         try { OffsetDateTime.parse(it) } catch (_: Exception) { null }
                     }

@@ -8,11 +8,14 @@ import io.ktor.server.plugins.compression.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.plugins.defaultheaders.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.sentry.Sentry
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 fun Application.configureSerialization() {
     install(ContentNegotiation) {
@@ -40,6 +43,36 @@ fun Application.configureHTTP() {
     install(Compression) {
         gzip {
             priority = 1.0
+        }
+    }
+
+    install(RateLimit) {
+        // General API: 120 requests per minute per IP
+        global {
+            rateLimiter(limit = 120, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["CF-Connecting-IP"]
+                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                    ?: "unknown"
+            }
+        }
+        // Events endpoint: stricter (30 per minute)
+        register(RateLimitName("events")) {
+            rateLimiter(limit = 30, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["CF-Connecting-IP"]
+                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                    ?: "unknown"
+            }
+        }
+        // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
+        register(RateLimitName("search")) {
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["CF-Connecting-IP"]
+                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                    ?: "unknown"
+            }
         }
     }
 

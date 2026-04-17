@@ -1,6 +1,7 @@
 package zed.rainxch.githubstore.db
 
 import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 
 object Repos : Table("repos") {
@@ -15,6 +16,7 @@ object Repos : Table("repos") {
     val stars = integer("stars").default(0)
     val forks = integer("forks").default(0)
     val language = text("language").nullable()
+    val topics = array<String>("topics", TextColumnType())
     val latestReleaseDate = timestampWithTimeZone("latest_release_date").nullable()
     val latestReleaseTag = text("latest_release_tag").nullable()
     val hasInstallersAndroid = bool("has_installers_android").default(false)

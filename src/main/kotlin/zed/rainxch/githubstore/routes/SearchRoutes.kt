@@ -4,6 +4,7 @@ import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import zed.rainxch.githubstore.db.MeilisearchClient
+import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.model.RepoOwner
@@ -18,6 +19,7 @@ fun Route.searchRoutes(
     meilisearch: MeilisearchClient,
     searchRepository: SearchRepository,
     githubSearch: GitHubSearchClient,
+    searchMissRepository: SearchMissRepository,
 ) {
     get("/search") {
         val query = call.request.queryParameters["q"]
@@ -71,6 +73,11 @@ fun Route.searchRoutes(
                     totalHits = items.size
                     source = if (items.size > result.hits.size) "meilisearch+github" else "meilisearch"
                 }
+            }
+
+            // Log search miss if still 0 results after GitHub passthrough
+            if (items.isEmpty()) {
+                searchMissRepository.logMiss(query)
             }
 
             call.response.header(HttpHeaders.CacheControl, "public, max-age=15, s-maxage=30")
