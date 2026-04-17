@@ -5,14 +5,20 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.SearchRepository
+import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.model.SearchResponse
 
 private val VALID_PLATFORMS = setOf("android", "windows", "macos", "linux")
 private val VALID_SORTS = setOf("relevance", "stars", "recent")
+private const val ON_DEMAND_THRESHOLD = 5
 
-fun Route.searchRoutes(meilisearch: MeilisearchClient, searchRepository: SearchRepository) {
+fun Route.searchRoutes(
+    meilisearch: MeilisearchClient,
+    searchRepository: SearchRepository,
+    githubSearch: GitHubSearchClient,
+) {
     get("/search") {
         val query = call.request.queryParameters["q"]
         if (query.isNullOrBlank()) {
@@ -50,39 +56,29 @@ fun Route.searchRoutes(meilisearch: MeilisearchClient, searchRepository: SearchR
                 offset = offset,
             )
 
-            val items = result.hits.map { hit ->
-                RepoResponse(
-                    id = hit.id,
-                    name = hit.name,
-                    fullName = hit.full_name,
-                    owner = RepoOwner(login = hit.owner, avatarUrl = hit.owner_avatar_url),
-                    description = hit.description,
-                    defaultBranch = hit.default_branch,
-                    htmlUrl = hit.html_url,
-                    stargazersCount = hit.stars,
-                    forksCount = hit.forks,
-                    language = hit.language,
-                    topics = emptyList(),
-                    releasesUrl = "${hit.html_url}/releases",
-                    updatedAt = null,
-                    createdAt = null,
-                    latestReleaseDate = hit.latest_release_date,
-                    latestReleaseTag = hit.latest_release_tag,
-                    hasInstallersAndroid = hit.has_installers_android,
-                    hasInstallersWindows = hit.has_installers_windows,
-                    hasInstallersMacos = hit.has_installers_macos,
-                    hasInstallersLinux = hit.has_installers_linux,
-                    trendingScore = hit.trending_score,
-                    popularityScore = hit.popularity_score,
-                )
+            var items = result.hits.map { it.toRepoResponse() }
+            var totalHits = result.estimatedTotalHits
+            var source = "meilisearch"
+
+            // On-demand: if few results, also search GitHub and ingest
+            if (items.size < ON_DEMAND_THRESHOLD && offset == 0) {
+                val githubResults = githubSearch.searchAndIngest(query, platform, limit = 10)
+                if (githubResults.isNotEmpty()) {
+                    // Merge: existing items first, then GitHub results (deduped by id)
+                    val existingIds = items.map { it.id }.toSet()
+                    val newItems = githubResults.filter { it.id !in existingIds }
+                    items = items + newItems
+                    totalHits = items.size
+                    source = if (items.size > result.hits.size) "meilisearch+github" else "meilisearch"
+                }
             }
 
             call.response.header(HttpHeaders.CacheControl, "public, max-age=15, s-maxage=30")
             call.respond(SearchResponse(
                 items = items,
-                totalHits = result.estimatedTotalHits,
+                totalHits = totalHits,
                 processingTimeMs = result.processingTimeMs,
-                source = "meilisearch",
+                source = source,
             ))
         } catch (e: Exception) {
             // Meilisearch down — fall back to Postgres FTS
@@ -107,3 +103,28 @@ fun Route.searchRoutes(meilisearch: MeilisearchClient, searchRepository: SearchR
         }
     }
 }
+
+private fun zed.rainxch.githubstore.db.MeiliRepoHit.toRepoResponse() = RepoResponse(
+    id = id,
+    name = name,
+    fullName = full_name,
+    owner = RepoOwner(login = owner, avatarUrl = owner_avatar_url),
+    description = description,
+    defaultBranch = default_branch,
+    htmlUrl = html_url,
+    stargazersCount = stars,
+    forksCount = forks,
+    language = language,
+    topics = emptyList(),
+    releasesUrl = "$html_url/releases",
+    updatedAt = null,
+    createdAt = null,
+    latestReleaseDate = latest_release_date,
+    latestReleaseTag = latest_release_tag,
+    hasInstallersAndroid = has_installers_android,
+    hasInstallersWindows = has_installers_windows,
+    hasInstallersMacos = has_installers_macos,
+    hasInstallersLinux = has_installers_linux,
+    trendingScore = trending_score,
+    popularityScore = popularity_score,
+)

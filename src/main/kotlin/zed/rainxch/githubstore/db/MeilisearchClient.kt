@@ -60,6 +60,14 @@ class MeilisearchClient(
         return response.body<MeiliSearchResult>()
     }
 
+    suspend fun addDocuments(docs: List<Map<String, Any?>>) {
+        client.post("$url/indexes/$indexName/documents") {
+            header("Authorization", "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(docs)
+        }
+    }
+
     suspend fun isHealthy(): Boolean = try {
         val response = client.get("$url/health") {
             header("Authorization", "Bearer $apiKey")
