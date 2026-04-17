@@ -111,6 +111,7 @@ data class MeiliRepoHit(
     val language: String? = null,
     val latest_release_date: String? = null,
     val latest_release_tag: String? = null,
+    val topics: List<String> = emptyList(),
     val download_count: Long = 0,
     val has_installers_android: Boolean = false,
     val has_installers_windows: Boolean = false,
