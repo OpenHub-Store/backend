@@ -56,6 +56,10 @@ dependencies {
     // Logging
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
 
+    // Error tracking
+    implementation("io.sentry:sentry:8.13.2")
+    implementation("io.sentry:sentry-logback:8.13.2")
+
     // Testing
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("org.jetbrains.kotlin:kotlin-test")

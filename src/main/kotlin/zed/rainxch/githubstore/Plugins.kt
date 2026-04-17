@@ -10,6 +10,7 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
+import io.sentry.Sentry
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 
@@ -51,6 +52,7 @@ fun Application.configureHTTP() {
     install(StatusPages) {
         exception<Throwable> { call, cause ->
             call.application.environment.log.error("Unhandled exception", cause)
+            Sentry.captureException(cause)
             call.respond(
                 HttpStatusCode.InternalServerError,
                 mapOf("error" to "Internal server error")
