@@ -134,7 +134,9 @@ class GitHubSearchClient(
         minStars: Int = 10,
     ): List<GitHubRepo> {
         val response = client.get("https://api.github.com/search/repositories") {
-            parameter("q", "$query stars:>=$minStars")
+            // fork:true includes both forks and non-forks.
+            // Abandoned forks get filtered out later by installer release + star checks.
+            parameter("q", "$query stars:>=$minStars fork:true")
             parameter("sort", "stars")
             parameter("per_page", limit)
             parameter("page", page)
