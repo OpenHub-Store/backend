@@ -24,6 +24,7 @@ object Repos : Table("repos") {
     val installCount = integer("install_count").default(0)
     val installSuccessRate = float("install_success_rate").nullable()
     val viewCount7d = integer("view_count_7d").default(0)
+    val downloadCount = long("download_count").default(0)
     val trendingScore = float("trending_score").nullable()
     val popularityScore = float("popularity_score").nullable()
     val createdAtGh = timestampWithTimeZone("created_at_gh").nullable()

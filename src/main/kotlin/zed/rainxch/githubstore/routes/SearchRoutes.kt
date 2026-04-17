@@ -121,6 +121,7 @@ private fun zed.rainxch.githubstore.db.MeiliRepoHit.toRepoResponse() = RepoRespo
     createdAt = null,
     latestReleaseDate = latest_release_date,
     latestReleaseTag = latest_release_tag,
+    downloadCount = download_count,
     hasInstallersAndroid = has_installers_android,
     hasInstallersWindows = has_installers_windows,
     hasInstallersMacos = has_installers_macos,

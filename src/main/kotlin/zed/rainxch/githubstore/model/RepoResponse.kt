@@ -28,6 +28,7 @@ data class RepoResponse(
     val latestReleaseTag: String? = null,
     val releaseRecency: Int? = null,
     val releaseRecencyText: String? = null,
+    val downloadCount: Long = 0,
     val trendingScore: Double? = null,
     val popularityScore: Double? = null,
     val hasInstallersAndroid: Boolean = false,

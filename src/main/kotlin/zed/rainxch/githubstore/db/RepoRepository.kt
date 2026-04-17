@@ -67,6 +67,7 @@ class RepoRepository {
             latestReleaseTag = this[Repos.latestReleaseTag],
             releaseRecency = recencyDays,
             releaseRecencyText = recencyDays?.let { formatRecency(it) },
+            downloadCount = this[Repos.downloadCount],
             trendingScore = if (category == "trending") this[Repos.trendingScore]?.toDouble() else null,
             popularityScore = if (category == "most-popular") this[Repos.popularityScore]?.toDouble() else null,
             hasInstallersAndroid = this[Repos.hasInstallersAndroid],

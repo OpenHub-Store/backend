@@ -63,7 +63,8 @@ class GitHubSearchClient(
                 // Filter by requested platform if specified
                 if (platform != null && platformFlags[platform] != true) return@mapNotNull null
 
-                RepoWithRelease(repo, releases, platformFlags)
+                val downloadCount = releases.assets.sumOf { it.downloadCount }
+                RepoWithRelease(repo, releases, platformFlags, downloadCount)
             }.take(limit)
 
             if (withInstallers.isEmpty()) return emptyList()
@@ -147,6 +148,7 @@ class GitHubSearchClient(
                     it[hasInstallersWindows] = platforms["windows"] ?: false
                     it[hasInstallersMacos] = platforms["macos"] ?: false
                     it[hasInstallersLinux] = platforms["linux"] ?: false
+                    it[downloadCount] = r.downloadCount
                     it[indexedAt] = OffsetDateTime.now()
                 }
             }
@@ -170,6 +172,7 @@ class GitHubSearchClient(
                     "language" to r.repo.language,
                     "latest_release_date" to r.release.publishedAt,
                     "latest_release_tag" to r.release.tagName,
+                    "download_count" to r.downloadCount,
                     "has_installers_android" to (r.platformFlags["android"] ?: false),
                     "has_installers_windows" to (r.platformFlags["windows"] ?: false),
                     "has_installers_macos" to (r.platformFlags["macos"] ?: false),
@@ -186,6 +189,7 @@ class GitHubSearchClient(
         val repo: GitHubRepo,
         val release: GitHubRelease,
         val platformFlags: Map<String, Boolean>,
+        val downloadCount: Long = 0,
     ) {
         fun toRepoResponse(): RepoResponse {
             val releaseDateStr = release.publishedAt
@@ -221,6 +225,7 @@ class GitHubSearchClient(
                         else -> "Released $it days ago"
                     }
                 },
+                downloadCount = downloadCount,
                 hasInstallersAndroid = platformFlags["android"] ?: false,
                 hasInstallersWindows = platformFlags["windows"] ?: false,
                 hasInstallersMacos = platformFlags["macos"] ?: false,
@@ -271,4 +276,5 @@ data class GitHubRelease(
 data class GitHubAsset(
     val name: String,
     val size: Long = 0,
+    @SerialName("download_count") val downloadCount: Long = 0,
 )

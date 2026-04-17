@@ -51,7 +51,20 @@ object DatabaseFactory {
                 exec(migrationSql)
                 log.info("Schema migration applied successfully")
             } else {
-                log.info("Schema already exists, skipping migration")
+                log.info("Schema already exists, skipping initial migration")
+            }
+
+            // Apply incremental migrations
+            val migrations = listOf("V2__add_download_count.sql")
+            for (migration in migrations) {
+                val sql = this::class.java.classLoader
+                    .getResourceAsStream("db/migration/$migration")
+                    ?.bufferedReader()?.readText() ?: continue
+                try {
+                    exec(sql)
+                } catch (_: Exception) {
+                    // Column/table already exists — safe to ignore
+                }
             }
         }
     }
