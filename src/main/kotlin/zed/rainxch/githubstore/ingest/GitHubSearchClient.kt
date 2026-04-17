@@ -41,6 +41,31 @@ class GitHubSearchClient(
         ".appimage", ".deb", ".rpm", ".flatpak",  // Linux
     )
 
+    // NSFW blocklist — mirrors the Python fetcher's BLOCKED_TOPICS.
+    // Applied to query, topics, and description of GitHub search results.
+    private val blockedTerms = setOf(
+        "nsfw", "porn", "pornography", "hentai", "e-hentai", "ehentai",
+        "adult", "adult-content", "xxx", "erotic", "erotica", "sex",
+        "nude", "nudes", "nudity", "lewd", "r18", "r-18",
+        "rule34", "rule-34", "booru", "gelbooru", "danbooru",
+        "nhentai", "hanime", "ecchi", "yaoi", "yuri", "doujin", "doujinshi",
+        "onlyfans", "fansly", "chaturbate", "xvideos", "pornhub",
+        "xhamster", "xnxx", "redtube", "cam-girl", "camgirl",
+        "fetish", "bdsm", "harem", "waifu", "18+",
+    )
+
+    private fun queryIsBlocked(query: String): Boolean {
+        val lower = query.lowercase()
+        return blockedTerms.any { term -> lower.contains(term) }
+    }
+
+    private fun repoIsBlocked(repo: GitHubRepo): Boolean {
+        val topicsLower = repo.topics.map { it.lowercase() }.toSet()
+        if (topicsLower.any { it in blockedTerms }) return true
+        val desc = (repo.description ?: "").lowercase()
+        return blockedTerms.any { term -> desc.contains(term) }
+    }
+
     /**
      * Search GitHub for repos matching the query, check for installer releases,
      * ingest into Postgres + Meilisearch, and return the results.
@@ -51,11 +76,15 @@ class GitHubSearchClient(
         limit: Int = 10,
     ): List<RepoResponse> {
         try {
+            if (queryIsBlocked(query)) return emptyList()
+
             val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10)
             if (repos.isEmpty()) return emptyList()
 
             // Check which repos have releases with installers
             val withInstallers = repos.mapNotNull { repo ->
+                if (repoIsBlocked(repo)) return@mapNotNull null
+
                 val releases = fetchLatestRelease(repo.fullName) ?: return@mapNotNull null
                 val platformFlags = detectPlatforms(releases)
                 if (platformFlags.none { it.value }) return@mapNotNull null
@@ -94,12 +123,14 @@ class GitHubSearchClient(
         page: Int,
     ): ExploreResult {
         try {
+            if (queryIsBlocked(query)) return ExploreResult(emptyList(), hasMore = false)
+
             // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
             val repos = searchGitHub(query, limit = 10, page = page, minStars = 5)
             if (repos.isEmpty()) return ExploreResult(emptyList(), hasMore = false)
 
             val filtered = repos.filter { repo ->
-                !repo.archived && !repo.disabled
+                !repo.archived && !repo.disabled && !repoIsBlocked(repo)
             }
 
             val withInstallers = filtered.mapNotNull { repo ->
