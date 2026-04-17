@@ -51,7 +51,7 @@ class GitHubSearchClient(
         limit: Int = 10,
     ): List<RepoResponse> {
         try {
-            val repos = searchGitHub(query, limit = 30)
+            val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10)
             if (repos.isEmpty()) return emptyList()
 
             // Check which repos have releases with installers
@@ -84,11 +84,60 @@ class GitHubSearchClient(
         }
     }
 
-    private suspend fun searchGitHub(query: String, limit: Int): List<GitHubRepo> {
+    /**
+     * Explicit user-triggered "Fetch more from GitHub" — paginated deep search.
+     * Returns (new repos added, hasMore flag).
+     */
+    suspend fun explore(
+        query: String,
+        platform: String?,
+        page: Int,
+    ): ExploreResult {
+        try {
+            // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
+            val repos = searchGitHub(query, limit = 10, page = page, minStars = 5)
+            if (repos.isEmpty()) return ExploreResult(emptyList(), hasMore = false)
+
+            val filtered = repos.filter { repo ->
+                !repo.archived && !repo.disabled
+            }
+
+            val withInstallers = filtered.mapNotNull { repo ->
+                val releases = fetchLatestRelease(repo.fullName) ?: return@mapNotNull null
+                val platformFlags = detectPlatforms(releases)
+                if (platformFlags.none { it.value }) return@mapNotNull null
+                if (platform != null && platformFlags[platform] != true) return@mapNotNull null
+
+                val downloadCount = releases.assets.sumOf { it.downloadCount }
+                RepoWithRelease(repo, releases, platformFlags, downloadCount)
+            }
+
+            if (withInstallers.isNotEmpty()) {
+                ingestToPostgres(withInstallers)
+                syncToMeilisearch(withInstallers)
+                log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+            }
+
+            // hasMore = true if GitHub returned a full page (more pages may exist)
+            val hasMore = repos.size >= 10
+            return ExploreResult(withInstallers.map { it.toRepoResponse() }, hasMore = hasMore)
+        } catch (e: Exception) {
+            log.warn("Explore failed for query '{}' page {}: {}", query, page, e.message)
+            return ExploreResult(emptyList(), hasMore = false)
+        }
+    }
+
+    private suspend fun searchGitHub(
+        query: String,
+        limit: Int,
+        page: Int = 1,
+        minStars: Int = 10,
+    ): List<GitHubRepo> {
         val response = client.get("https://api.github.com/search/repositories") {
-            parameter("q", "$query stars:>10")
+            parameter("q", "$query stars:>=$minStars")
             parameter("sort", "stars")
             parameter("per_page", limit)
+            parameter("page", page)
             header("Accept", "application/vnd.github+json")
             if (githubToken != null) {
                 header("Authorization", "token $githubToken")
@@ -238,6 +287,11 @@ class GitHubSearchClient(
 
 // GitHub API DTOs
 
+data class ExploreResult(
+    val items: List<RepoResponse>,
+    val hasMore: Boolean,
+)
+
 @Serializable
 data class GitHubSearchResponse(
     val items: List<GitHubRepo> = emptyList(),
@@ -256,6 +310,8 @@ data class GitHubRepo(
     @SerialName("forks_count") val forksCount: Int = 0,
     val language: String? = null,
     val topics: List<String> = emptyList(),
+    val archived: Boolean = false,
+    val disabled: Boolean = false,
     @SerialName("updated_at") val updatedAt: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
 )

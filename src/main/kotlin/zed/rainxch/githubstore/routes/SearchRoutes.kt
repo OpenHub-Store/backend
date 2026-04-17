@@ -7,6 +7,7 @@ import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.model.ExploreResponse
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.model.SearchResponse
@@ -108,6 +109,33 @@ fun Route.searchRoutes(
                 source = "postgres",
             ))
         }
+    }
+
+    get("/search/explore") {
+        val query = call.request.queryParameters["q"]
+        if (query.isNullOrBlank()) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest, mapOf("error" to "Missing query parameter 'q'")
+            )
+        }
+
+        val platform = call.request.queryParameters["platform"]
+        if (platform != null && platform !in VALID_PLATFORMS) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid platform. Must be one of: $VALID_PLATFORMS")
+            )
+        }
+
+        val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 1).coerceIn(1, 10)
+
+        val result = githubSearch.explore(query, platform, page)
+
+        call.respond(ExploreResponse(
+            items = result.items,
+            page = page,
+            hasMore = result.hasMore,
+        ))
     }
 }
 
