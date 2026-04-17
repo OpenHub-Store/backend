@@ -208,25 +208,26 @@ class GitHubSearchClient(
     private suspend fun syncToMeilisearch(repos: List<RepoWithRelease>) {
         try {
             val docs = repos.map { r ->
-                mapOf(
-                    "id" to r.repo.id,
-                    "full_name" to r.repo.fullName,
-                    "owner" to r.repo.owner.login,
-                    "name" to r.repo.name,
-                    "owner_avatar_url" to r.repo.owner.avatarUrl,
-                    "description" to r.repo.description,
-                    "default_branch" to r.repo.defaultBranch,
-                    "html_url" to r.repo.htmlUrl,
-                    "stars" to r.repo.stargazersCount,
-                    "forks" to r.repo.forksCount,
-                    "language" to r.repo.language,
-                    "latest_release_date" to r.release.publishedAt,
-                    "latest_release_tag" to r.release.tagName,
-                    "download_count" to r.downloadCount,
-                    "has_installers_android" to (r.platformFlags["android"] ?: false),
-                    "has_installers_windows" to (r.platformFlags["windows"] ?: false),
-                    "has_installers_macos" to (r.platformFlags["macos"] ?: false),
-                    "has_installers_linux" to (r.platformFlags["linux"] ?: false),
+                zed.rainxch.githubstore.db.MeiliRepoHit(
+                    id = r.repo.id,
+                    full_name = r.repo.fullName,
+                    owner = r.repo.owner.login,
+                    name = r.repo.name,
+                    owner_avatar_url = r.repo.owner.avatarUrl,
+                    description = r.repo.description,
+                    default_branch = r.repo.defaultBranch,
+                    html_url = r.repo.htmlUrl,
+                    stars = r.repo.stargazersCount,
+                    forks = r.repo.forksCount,
+                    language = r.repo.language,
+                    topics = r.repo.topics,
+                    latest_release_date = r.release.publishedAt,
+                    latest_release_tag = r.release.tagName,
+                    download_count = r.downloadCount,
+                    has_installers_android = r.platformFlags["android"] ?: false,
+                    has_installers_windows = r.platformFlags["windows"] ?: false,
+                    has_installers_macos = r.platformFlags["macos"] ?: false,
+                    has_installers_linux = r.platformFlags["linux"] ?: false,
                 )
             }
             meilisearchClient.addDocuments(docs)

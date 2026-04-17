@@ -86,6 +86,7 @@ object SearchMisses : Table("search_misses") {
     val querySample = text("query_sample").nullable()
     val missCount = integer("miss_count").default(1)
     val lastSeenAt = timestampWithTimeZone("last_seen_at")
+    val lastProcessedAt = timestampWithTimeZone("last_processed_at").nullable()
 
     override val primaryKey = PrimaryKey(queryHash)
 }

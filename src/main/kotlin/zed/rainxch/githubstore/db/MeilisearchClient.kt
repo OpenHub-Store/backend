@@ -60,7 +60,7 @@ class MeilisearchClient(
         return response.body<MeiliSearchResult>()
     }
 
-    suspend fun addDocuments(docs: List<Map<String, Any?>>) {
+    suspend fun addDocuments(docs: List<MeiliRepoHit>) {
         client.post("$url/indexes/$indexName/documents") {
             header("Authorization", "Bearer $apiKey")
             contentType(ContentType.Application.Json)

@@ -4,9 +4,11 @@ import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.sentry.Sentry
+import org.koin.ktor.ext.inject
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
 import zed.rainxch.githubstore.db.DatabaseFactory
+import zed.rainxch.githubstore.ingest.SearchMissWorker
 import zed.rainxch.githubstore.routes.configureRouting
 
 fun main() {
@@ -38,4 +40,8 @@ fun Application.module() {
     configureHTTP()
     DatabaseFactory.init()
     configureRouting()
+
+    // Start background workers after routing is configured
+    val searchMissWorker by inject<SearchMissWorker>()
+    searchMissWorker.start()
 }

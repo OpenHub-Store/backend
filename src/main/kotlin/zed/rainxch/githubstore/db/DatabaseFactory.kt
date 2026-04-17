@@ -55,7 +55,10 @@ object DatabaseFactory {
             }
 
             // Apply incremental migrations
-            val migrations = listOf("V2__add_download_count.sql")
+            val migrations = listOf(
+                "V2__add_download_count.sql",
+                "V3__search_miss_processing.sql",
+            )
             for (migration in migrations) {
                 val sql = this::class.java.classLoader
                     .getResourceAsStream("db/migration/$migration")
