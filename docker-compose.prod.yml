@@ -6,6 +6,9 @@ services:
       POSTGRES_DB: githubstore
       POSTGRES_USER: githubstore
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Bind to VPS localhost only (not internet) so SSH tunnel can reach it
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
