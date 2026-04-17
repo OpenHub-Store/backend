@@ -31,6 +31,7 @@ fun Route.categoryRoutes(repoRepository: RepoRepository) {
         }
 
         val repos = repoRepository.findByCategory(category, platform)
+        call.response.header(HttpHeaders.CacheControl, "public, max-age=60, s-maxage=120")
         call.respond(repos)
     }
 }

@@ -77,6 +77,7 @@ fun Route.searchRoutes(meilisearch: MeilisearchClient, searchRepository: SearchR
                 )
             }
 
+            call.response.header(HttpHeaders.CacheControl, "public, max-age=15, s-maxage=30")
             call.respond(SearchResponse(
                 items = items,
                 totalHits = result.estimatedTotalHits,

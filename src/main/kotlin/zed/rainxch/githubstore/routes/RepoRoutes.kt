@@ -18,6 +18,7 @@ fun Route.repoRoutes(repoRepository: RepoRepository) {
         if (repo == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Repo not found"))
         } else {
+            call.response.header(HttpHeaders.CacheControl, "public, max-age=30, s-maxage=60")
             call.respond(repo)
         }
     }
