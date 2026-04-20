@@ -29,6 +29,7 @@ object Repos : Table("repos") {
     val downloadCount = long("download_count").default(0)
     val trendingScore = float("trending_score").nullable()
     val popularityScore = float("popularity_score").nullable()
+    val searchScore = float("search_score").nullable()
     val createdAtGh = timestampWithTimeZone("created_at_gh").nullable()
     val updatedAtGh = timestampWithTimeZone("updated_at_gh").nullable()
     val indexedAt = timestampWithTimeZone("indexed_at")
@@ -87,6 +88,22 @@ object SearchMisses : Table("search_misses") {
     val missCount = integer("miss_count").default(1)
     val lastSeenAt = timestampWithTimeZone("last_seen_at")
     val lastProcessedAt = timestampWithTimeZone("last_processed_at").nullable()
+    val resultCount = integer("result_count").nullable()
 
     override val primaryKey = PrimaryKey(queryHash)
+}
+
+object RepoSignals : Table("repo_signals") {
+    val repoId = long("repo_id").references(Repos.id)
+    val clickCount30d = integer("click_count_30d").default(0)
+    val viewCount30d = integer("view_count_30d").default(0)
+    val installStarted30d = integer("install_started_30d").default(0)
+    val installSuccess30d = integer("install_success_30d").default(0)
+    val installFailed30d = integer("install_failed_30d").default(0)
+    val ctrScore = float("ctr_score").default(0f)
+    val installSuccessRate = float("install_success_rate").default(0f)
+    val lastClickAt = timestampWithTimeZone("last_click_at").nullable()
+    val updatedAt = timestampWithTimeZone("updated_at")
+
+    override val primaryKey = PrimaryKey(repoId)
 }
