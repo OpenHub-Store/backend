@@ -77,11 +77,13 @@ class GitHubSearchClient(
         query: String,
         platform: String?,
         limit: Int = 10,
+        userToken: String? = null,
     ): List<RepoResponse> {
         try {
             if (queryIsBlocked(query)) return emptyList()
 
-            val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10)
+            val token = userToken ?: githubToken
+            val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10, token = token)
             if (repos.isEmpty()) return emptyList()
 
             // Check which repos have releases with installers — fetch in parallel
@@ -89,7 +91,7 @@ class GitHubSearchClient(
             val withInstallers = coroutineScope {
                 candidates.map { repo ->
                     async {
-                        val release = fetchLatestRelease(repo.fullName) ?: return@async null
+                        val release = fetchLatestRelease(repo.fullName, token) ?: return@async null
                         val platformFlags = detectPlatforms(release)
                         if (platformFlags.none { it.value }) return@async null
                         if (platform != null && platformFlags[platform] != true) return@async null
@@ -124,12 +126,14 @@ class GitHubSearchClient(
         query: String,
         platform: String?,
         page: Int,
+        userToken: String? = null,
     ): ExploreResult {
         try {
             if (queryIsBlocked(query)) return ExploreResult(emptyList(), hasMore = false)
 
+            val token = userToken ?: githubToken
             // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
-            val repos = searchGitHub(query, limit = 10, page = page, minStars = 5)
+            val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, token = token)
             if (repos.isEmpty()) return ExploreResult(emptyList(), hasMore = false)
 
             val filtered = repos.filter { repo ->
@@ -139,7 +143,7 @@ class GitHubSearchClient(
             val withInstallers = coroutineScope {
                 filtered.map { repo ->
                     async {
-                        val release = fetchLatestRelease(repo.fullName) ?: return@async null
+                        val release = fetchLatestRelease(repo.fullName, token) ?: return@async null
                         val platformFlags = detectPlatforms(release)
                         if (platformFlags.none { it.value }) return@async null
                         if (platform != null && platformFlags[platform] != true) return@async null
@@ -169,6 +173,7 @@ class GitHubSearchClient(
         limit: Int,
         page: Int = 1,
         minStars: Int = 10,
+        token: String? = githubToken,
     ): List<GitHubRepo> {
         val response = client.get("https://api.github.com/search/repositories") {
             // fork:true includes both forks and non-forks.
@@ -178,8 +183,8 @@ class GitHubSearchClient(
             parameter("per_page", limit)
             parameter("page", page)
             header("Accept", "application/vnd.github+json")
-            if (githubToken != null) {
-                header("Authorization", "token $githubToken")
+            if (token != null) {
+                header("Authorization", "token $token")
             }
         }
 
@@ -187,12 +192,12 @@ class GitHubSearchClient(
         return response.body<GitHubSearchResponse>().items
     }
 
-    private suspend fun fetchLatestRelease(fullName: String): GitHubRelease? {
+    private suspend fun fetchLatestRelease(fullName: String, token: String? = githubToken): GitHubRelease? {
         return try {
             val response = client.get("https://api.github.com/repos/$fullName/releases/latest") {
                 header("Accept", "application/vnd.github+json")
-                if (githubToken != null) {
-                    header("Authorization", "token $githubToken")
+                if (token != null) {
+                    header("Authorization", "token $token")
                 }
             }
             if (response.status == HttpStatusCode.OK) response.body<GitHubRelease>() else null

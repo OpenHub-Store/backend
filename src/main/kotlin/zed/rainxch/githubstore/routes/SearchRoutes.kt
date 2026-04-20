@@ -49,6 +49,8 @@ fun Route.searchRoutes(
         val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 20).coerceIn(1, 50)
         val offset = (call.request.queryParameters["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
 
+        val userToken = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
+
         // Try Meilisearch first, fall back to Postgres FTS
         try {
             val result = meilisearch.search(
@@ -65,7 +67,7 @@ fun Route.searchRoutes(
 
             // On-demand: if few results, also search GitHub and ingest
             if (items.size < ON_DEMAND_THRESHOLD && offset == 0) {
-                val githubResults = githubSearch.searchAndIngest(query, platform, limit = 10)
+                val githubResults = githubSearch.searchAndIngest(query, platform, limit = 10, userToken = userToken)
                 if (githubResults.isNotEmpty()) {
                     // Merge: existing items first, then GitHub results (deduped by id)
                     val existingIds = items.map { it.id }.toSet()
@@ -128,8 +130,9 @@ fun Route.searchRoutes(
         }
 
         val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 1).coerceIn(1, 10)
+        val userToken = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
 
-        val result = githubSearch.explore(query, platform, page)
+        val result = githubSearch.explore(query, platform, page, userToken = userToken)
 
         call.respond(ExploreResponse(
             items = result.items,
