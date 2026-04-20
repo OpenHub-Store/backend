@@ -105,12 +105,14 @@ class GitHubSearchClient(
             val withInstallers = coroutineScope {
                 candidates.map { repo ->
                     async {
-                        val release = fetchLatestRelease(repo.fullName, token) ?: return@async null
-                        val platformFlags = detectPlatforms(release)
+                        val releases = fetchAllReleases(repo.fullName, token)
+                        val latest = releases.firstOrNull { !it.draft && !it.prerelease }
+                            ?: return@async null
+                        val platformFlags = detectPlatforms(latest)
                         if (platformFlags.none { it.value }) return@async null
                         if (platform != null && platformFlags[platform] != true) return@async null
-                        val downloadCount = release.assets.sumOf { it.downloadCount }
-                        RepoWithRelease(repo, release, platformFlags, downloadCount)
+                        val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
+                        RepoWithRelease(repo, latest, platformFlags, downloadCount)
                     }
                 }.awaitAll()
             }.filterNotNull().take(limit)
@@ -156,12 +158,14 @@ class GitHubSearchClient(
             val withInstallers = coroutineScope {
                 filtered.map { repo ->
                     async {
-                        val release = fetchLatestRelease(repo.fullName, token) ?: return@async null
-                        val platformFlags = detectPlatforms(release)
+                        val releases = fetchAllReleases(repo.fullName, token)
+                        val latest = releases.firstOrNull { !it.draft && !it.prerelease }
+                            ?: return@async null
+                        val platformFlags = detectPlatforms(latest)
                         if (platformFlags.none { it.value }) return@async null
                         if (platform != null && platformFlags[platform] != true) return@async null
-                        val downloadCount = release.assets.sumOf { it.downloadCount }
-                        RepoWithRelease(repo, release, platformFlags, downloadCount)
+                        val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
+                        RepoWithRelease(repo, latest, platformFlags, downloadCount)
                     }
                 }.awaitAll()
             }.filterNotNull()
@@ -207,17 +211,23 @@ class GitHubSearchClient(
         return response.body<GitHubSearchResponse>().items
     }
 
-    private suspend fun fetchLatestRelease(fullName: String, token: String? = githubToken): GitHubRelease? {
+    // Fetches up to 100 most recent releases (one page). Used to aggregate
+    // download_count across every asset of every release — matching the value
+    // shields.io shows. Repos with more than 100 releases still undercount
+    // (same limitation as the Python backfill script); follow Link: next if
+    // that ever matters.
+    private suspend fun fetchAllReleases(fullName: String, token: String? = githubToken): List<GitHubRelease> {
         return try {
-            val response = client.get("https://api.github.com/repos/$fullName/releases/latest") {
+            val response = client.get("https://api.github.com/repos/$fullName/releases") {
+                parameter("per_page", 100)
                 header("Accept", "application/vnd.github+json")
                 if (token != null) {
                     header("Authorization", "token $token")
                 }
             }
-            if (response.status == HttpStatusCode.OK) response.body<GitHubRelease>() else null
+            if (response.status == HttpStatusCode.OK) response.body<List<GitHubRelease>>() else emptyList()
         } catch (_: Exception) {
-            null
+            emptyList()
         }
     }
 
@@ -386,6 +396,8 @@ data class GitHubOwner(
 data class GitHubRelease(
     @SerialName("tag_name") val tagName: String? = null,
     @SerialName("published_at") val publishedAt: String? = null,
+    val draft: Boolean = false,
+    val prerelease: Boolean = false,
     val assets: List<GitHubAsset> = emptyList(),
 )
 
