@@ -10,6 +10,7 @@ import zed.rainxch.githubstore.db.RepoRepository
 import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 
 fun Application.configureRouting() {
     val eventRepository by inject<EventRepository>()
@@ -18,6 +19,7 @@ fun Application.configureRouting() {
     val searchMissRepository by inject<SearchMissRepository>()
     val meilisearchClient by inject<MeilisearchClient>()
     val githubSearchClient by inject<GitHubSearchClient>()
+    val searchMetrics by inject<SearchMetricsRegistry>()
 
     routing {
         route("/v1") {
@@ -29,8 +31,9 @@ fun Application.configureRouting() {
             topicRoutes(repoRepository)
             repoRoutes(repoRepository)
             rateLimit(RateLimitName("search")) {
-                searchRoutes(meilisearchClient, searchRepository, githubSearchClient, searchMissRepository)
+                searchRoutes(meilisearchClient, searchRepository, githubSearchClient, searchMissRepository, searchMetrics)
             }
+            internalRoutes(searchMetrics)
         }
     }
 }

@@ -7,6 +7,7 @@ import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.model.ExploreResponse
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
@@ -21,6 +22,7 @@ fun Route.searchRoutes(
     searchRepository: SearchRepository,
     githubSearch: GitHubSearchClient,
     searchMissRepository: SearchMissRepository,
+    metrics: SearchMetricsRegistry,
 ) {
     get("/search") {
         val query = call.request.queryParameters["q"]
@@ -84,6 +86,12 @@ fun Route.searchRoutes(
                 searchMissRepository.logMiss(query, resultCount = items.size)
             }
 
+            if (source == "meilisearch+github") {
+                metrics.recordPassthrough(items.size, result.processingTimeMs)
+            } else {
+                metrics.recordMeiliOnly(items.size, result.processingTimeMs)
+            }
+
             call.response.header(HttpHeaders.CacheControl, "public, max-age=15, s-maxage=30")
             call.respond(SearchResponse(
                 items = items,
@@ -105,6 +113,7 @@ fun Route.searchRoutes(
             )
             val elapsed = (System.currentTimeMillis() - startTime).toInt()
 
+            metrics.recordPostgresFallback(items.size, elapsed)
             call.respond(SearchResponse(
                 items = items,
                 totalHits = items.size,
