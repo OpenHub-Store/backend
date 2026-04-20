@@ -72,19 +72,23 @@ class SignalAggregationWorker(
 
         transaction {
             val conn = TransactionManager.current().connection.connection as java.sql.Connection
+            // INNER JOIN with repos so orphan event.repo_ids (clients can log clicks
+            // for any GitHub repo, not just ones the backend indexed) don't violate
+            // the repo_signals.repo_id FK.
             conn.prepareStatement(
                 """
                 SELECT
-                    repo_id,
-                    COUNT(*) FILTER (WHERE event_type = 'search_result_clicked') AS clicks,
-                    COUNT(*) FILTER (WHERE event_type = 'repo_viewed')           AS views,
-                    COUNT(*) FILTER (WHERE event_type = 'install_started')       AS installs_started,
-                    COUNT(*) FILTER (WHERE event_type = 'install_succeeded')     AS installs_success,
-                    COUNT(*) FILTER (WHERE event_type = 'install_failed')        AS installs_failed,
-                    MAX(ts) FILTER (WHERE event_type = 'search_result_clicked')  AS last_click
-                FROM events
-                WHERE ts > ? AND repo_id IS NOT NULL
-                GROUP BY repo_id
+                    e.repo_id,
+                    COUNT(*) FILTER (WHERE e.event_type = 'search_result_clicked') AS clicks,
+                    COUNT(*) FILTER (WHERE e.event_type = 'repo_viewed')           AS views,
+                    COUNT(*) FILTER (WHERE e.event_type = 'install_started')       AS installs_started,
+                    COUNT(*) FILTER (WHERE e.event_type = 'install_succeeded')     AS installs_success,
+                    COUNT(*) FILTER (WHERE e.event_type = 'install_failed')        AS installs_failed,
+                    MAX(e.ts) FILTER (WHERE e.event_type = 'search_result_clicked')  AS last_click
+                FROM events e
+                INNER JOIN repos r ON e.repo_id = r.id
+                WHERE e.ts > ? AND e.repo_id IS NOT NULL
+                GROUP BY e.repo_id
                 """.trimIndent()
             ).use { ps ->
                 ps.setObject(1, cutoff)
