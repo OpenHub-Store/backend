@@ -68,12 +68,13 @@ class MeilisearchClient(
         }
     }
 
-    // Partial update by primary key — unspecified fields on each doc are preserved.
-    // Used by SignalAggregationWorker to push refreshed search_score values without
-    // re-sending the whole document.
+    // Partial update by primary key — PUT /documents is Meili's add-or-update
+    // (unspecified fields PRESERVED). POST is add-or-REPLACE (unspecified fields
+    // deleted). Used by SignalAggregationWorker to refresh search_score
+    // without wiping every other field on the document.
     suspend fun updateScores(updates: List<MeiliScoreUpdate>) {
         if (updates.isEmpty()) return
-        client.post("$url/indexes/$indexName/documents") {
+        client.put("$url/indexes/$indexName/documents") {
             header("Authorization", "Bearer $apiKey")
             contentType(ContentType.Application.Json)
             setBody(updates)
