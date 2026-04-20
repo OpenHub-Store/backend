@@ -68,6 +68,18 @@ class MeilisearchClient(
         }
     }
 
+    // Partial update by primary key — unspecified fields on each doc are preserved.
+    // Used by SignalAggregationWorker to push refreshed search_score values without
+    // re-sending the whole document.
+    suspend fun updateScores(updates: List<MeiliScoreUpdate>) {
+        if (updates.isEmpty()) return
+        client.post("$url/indexes/$indexName/documents") {
+            header("Authorization", "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(updates)
+        }
+    }
+
     suspend fun isHealthy(): Boolean = try {
         val response = client.get("$url/health") {
             header("Authorization", "Bearer $apiKey")
@@ -94,6 +106,12 @@ data class MeiliSearchResult(
     val offset: Int = 0,
     val limit: Int = 20,
     val processingTimeMs: Int = 0,
+)
+
+@Serializable
+data class MeiliScoreUpdate(
+    val id: Long,
+    val search_score: Double,
 )
 
 @Serializable

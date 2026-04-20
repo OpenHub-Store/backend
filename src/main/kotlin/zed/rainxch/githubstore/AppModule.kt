@@ -8,6 +8,7 @@ import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.ingest.SearchMissWorker
+import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 
 val appModule = module {
     single { EventRepository() }
@@ -17,4 +18,5 @@ val appModule = module {
     single { MeilisearchClient() }
     single { GitHubSearchClient(get()) }
     single { SearchMissWorker(get(), get()) }
+    single { SignalAggregationWorker(get()) }
 }
