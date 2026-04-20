@@ -7,9 +7,14 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -36,6 +41,15 @@ class GitHubSearchClient(
             json(Json { ignoreUnknownKeys = true })
         }
     }
+
+    // Persistence happens off the request path: respond to the user with the enriched
+    // results first, then upsert to Postgres + Meili in this supervised scope so
+    // failures never crash the parent and never block the response.
+    private val persistenceScope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, e ->
+            log.warn("Async passthrough persistence failed", e)
+        }
+    )
 
     private val installerExtensions = listOf(
         ".apk", ".aab",                          // Android
@@ -103,13 +117,12 @@ class GitHubSearchClient(
 
             if (withInstallers.isEmpty()) return emptyList()
 
-            // Ingest into Postgres
-            ingestToPostgres(withInstallers)
-
-            // Sync to Meilisearch
-            syncToMeilisearch(withInstallers)
-
-            log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
+            // Persist asynchronously — the response doesn't wait for Postgres/Meili.
+            persistenceScope.launch {
+                ingestToPostgres(withInstallers)
+                syncToMeilisearch(withInstallers)
+                log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
+            }
 
             return withInstallers.map { it.toRepoResponse() }
         } catch (e: Exception) {
@@ -154,9 +167,11 @@ class GitHubSearchClient(
             }.filterNotNull()
 
             if (withInstallers.isNotEmpty()) {
-                ingestToPostgres(withInstallers)
-                syncToMeilisearch(withInstallers)
-                log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+                persistenceScope.launch {
+                    ingestToPostgres(withInstallers)
+                    syncToMeilisearch(withInstallers)
+                    log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+                }
             }
 
             // hasMore = true if GitHub returned a full page (more pages may exist)
