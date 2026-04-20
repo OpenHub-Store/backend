@@ -7,6 +7,9 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -81,20 +84,20 @@ class GitHubSearchClient(
             val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10)
             if (repos.isEmpty()) return emptyList()
 
-            // Check which repos have releases with installers
-            val withInstallers = repos.mapNotNull { repo ->
-                if (repoIsBlocked(repo)) return@mapNotNull null
-
-                val releases = fetchLatestRelease(repo.fullName) ?: return@mapNotNull null
-                val platformFlags = detectPlatforms(releases)
-                if (platformFlags.none { it.value }) return@mapNotNull null
-
-                // Filter by requested platform if specified
-                if (platform != null && platformFlags[platform] != true) return@mapNotNull null
-
-                val downloadCount = releases.assets.sumOf { it.downloadCount }
-                RepoWithRelease(repo, releases, platformFlags, downloadCount)
-            }.take(limit)
+            // Check which repos have releases with installers — fetch in parallel
+            val candidates = repos.filterNot { repoIsBlocked(it) }
+            val withInstallers = coroutineScope {
+                candidates.map { repo ->
+                    async {
+                        val release = fetchLatestRelease(repo.fullName) ?: return@async null
+                        val platformFlags = detectPlatforms(release)
+                        if (platformFlags.none { it.value }) return@async null
+                        if (platform != null && platformFlags[platform] != true) return@async null
+                        val downloadCount = release.assets.sumOf { it.downloadCount }
+                        RepoWithRelease(repo, release, platformFlags, downloadCount)
+                    }
+                }.awaitAll()
+            }.filterNotNull().take(limit)
 
             if (withInstallers.isEmpty()) return emptyList()
 
@@ -133,15 +136,18 @@ class GitHubSearchClient(
                 !repo.archived && !repo.disabled && !repoIsBlocked(repo)
             }
 
-            val withInstallers = filtered.mapNotNull { repo ->
-                val releases = fetchLatestRelease(repo.fullName) ?: return@mapNotNull null
-                val platformFlags = detectPlatforms(releases)
-                if (platformFlags.none { it.value }) return@mapNotNull null
-                if (platform != null && platformFlags[platform] != true) return@mapNotNull null
-
-                val downloadCount = releases.assets.sumOf { it.downloadCount }
-                RepoWithRelease(repo, releases, platformFlags, downloadCount)
-            }
+            val withInstallers = coroutineScope {
+                filtered.map { repo ->
+                    async {
+                        val release = fetchLatestRelease(repo.fullName) ?: return@async null
+                        val platformFlags = detectPlatforms(release)
+                        if (platformFlags.none { it.value }) return@async null
+                        if (platform != null && platformFlags[platform] != true) return@async null
+                        val downloadCount = release.assets.sumOf { it.downloadCount }
+                        RepoWithRelease(repo, release, platformFlags, downloadCount)
+                    }
+                }.awaitAll()
+            }.filterNotNull()
 
             if (withInstallers.isNotEmpty()) {
                 ingestToPostgres(withInstallers)
