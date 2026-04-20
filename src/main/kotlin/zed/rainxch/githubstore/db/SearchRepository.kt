@@ -27,9 +27,9 @@ class SearchRepository {
         }
 
         val orderClause = when (sort) {
-            "stars" -> "ORDER BY stars DESC"
-            "recent" -> "ORDER BY latest_release_date DESC NULLS LAST"
-            else -> "ORDER BY ts_rank(tsv_search, plainto_tsquery('english', ?)) DESC"
+            "stars" -> "ORDER BY stars DESC, search_score DESC NULLS LAST"
+            "recent" -> "ORDER BY latest_release_date DESC NULLS LAST, search_score DESC NULLS LAST"
+            else -> "ORDER BY ts_rank(tsv_search, plainto_tsquery('english', ?)) DESC, search_score DESC NULLS LAST"
         }
 
         val sql = buildString {
