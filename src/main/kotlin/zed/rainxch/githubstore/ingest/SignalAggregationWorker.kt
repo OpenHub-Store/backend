@@ -11,9 +11,8 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.MeiliScoreUpdate
 import zed.rainxch.githubstore.db.MeilisearchClient
+import zed.rainxch.githubstore.ranking.SearchScore
 import java.time.OffsetDateTime
-import kotlin.math.exp
-import kotlin.math.ln
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -173,7 +172,7 @@ class SignalAggregationWorker(
                         val sig = signals[id]
                         val ctr = sig?.let { laplaceCtr(it.clicks, it.views) } ?: 0f
                         val installRate = sig?.let { laplaceInstallRate(it.installsSuccess, it.installsFailed) } ?: 0f
-                        val score = compose(stars, ctr.toDouble(), installRate.toDouble(), days)
+                        val score = SearchScore.compute(stars, ctr.toDouble(), installRate.toDouble(), days)
                         scored.add(ScoredRepo(id, score))
                     }
                 }
@@ -200,12 +199,6 @@ class SignalAggregationWorker(
                 log.warn("Failed to push score batch of ${batch.size} to Meilisearch", e)
             }
         }
-    }
-
-    private fun compose(stars: Int, ctr: Double, installRate: Double, daysSinceRelease: Double?): Double {
-        val starFactor = (ln((stars + 1).toDouble()) / ln(10.0) / 6.0).coerceIn(0.0, 1.0)
-        val recencyFactor = daysSinceRelease?.let { exp(-it / 90.0).coerceIn(0.0, 1.0) } ?: 0.0
-        return 0.40 * starFactor + 0.30 * ctr + 0.20 * installRate + 0.10 * recencyFactor
     }
 
     private fun laplaceCtr(clicks: Int, views: Int): Float {

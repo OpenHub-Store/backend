@@ -24,6 +24,8 @@ import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.Repos
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
+import zed.rainxch.githubstore.ranking.SearchScore
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 
@@ -294,6 +296,26 @@ class GitHubSearchClient(
             for (r in repos) {
                 val repo = r.repo
                 val platforms = r.platformFlags
+                val releaseDate = r.release.publishedAt?.let {
+                    try { OffsetDateTime.parse(it) } catch (_: Exception) { null }
+                }
+                // Seed a cold-start search_score so passthrough-ingested repos
+                // don't sit at NULL (sorting to the bottom) until the next
+                // SignalAggregationWorker cycle. On re-ingest, preserve the
+                // worker's refined score — otherwise upsert would wipe it
+                // back to the cold-start value on every passthrough hit.
+                val daysSinceRelease = releaseDate?.let {
+                    ChronoUnit.DAYS.between(it.toInstant(), Instant.now()).toDouble().coerceAtLeast(0.0)
+                }
+                val existingScore: Float? = Repos
+                    .select(Repos.searchScore)
+                    .where { Repos.id eq repo.id }
+                    .firstOrNull()
+                    ?.get(Repos.searchScore)
+                val scoreToWrite = existingScore ?: SearchScore.compute(
+                    stars = repo.stargazersCount,
+                    daysSinceRelease = daysSinceRelease,
+                ).toFloat()
                 Repos.upsert(Repos.id) {
                     it[id] = repo.id
                     it[fullName] = repo.fullName
@@ -307,15 +329,14 @@ class GitHubSearchClient(
                     it[forks] = repo.forksCount
                     it[language] = repo.language
                     it[topics] = repo.topics
-                    it[latestReleaseDate] = r.release.publishedAt?.let {
-                        try { OffsetDateTime.parse(it) } catch (_: Exception) { null }
-                    }
+                    it[latestReleaseDate] = releaseDate
                     it[latestReleaseTag] = r.release.tagName
                     it[hasInstallersAndroid] = platforms["android"] ?: false
                     it[hasInstallersWindows] = platforms["windows"] ?: false
                     it[hasInstallersMacos] = platforms["macos"] ?: false
                     it[hasInstallersLinux] = platforms["linux"] ?: false
                     it[downloadCount] = r.downloadCount
+                    it[searchScore] = scoreToWrite
                     it[indexedAt] = OffsetDateTime.now()
                 }
             }
