@@ -211,24 +211,36 @@ class GitHubSearchClient(
         return response.body<GitHubSearchResponse>().items
     }
 
-    // Fetches up to 100 most recent releases (one page). Used to aggregate
-    // download_count across every asset of every release — matching the value
-    // shields.io shows. Repos with more than 100 releases still undercount
-    // (same limitation as the Python backfill script); follow Link: next if
-    // that ever matters.
+    // Fetches all releases by following the Link: next header. Used to
+    // aggregate download_count across every asset of every release — matches
+    // what shields.io shows. Bounded at 50 pages (5000 releases) so a
+    // pathological repo can't hang us.
     private suspend fun fetchAllReleases(fullName: String, token: String? = githubToken): List<GitHubRelease> {
-        return try {
-            val response = client.get("https://api.github.com/repos/$fullName/releases") {
-                parameter("per_page", 100)
-                header("Accept", "application/vnd.github+json")
-                if (token != null) {
-                    header("Authorization", "token $token")
+        val out = mutableListOf<GitHubRelease>()
+        var url: String? = "https://api.github.com/repos/$fullName/releases?per_page=100"
+        var pages = 0
+        while (url != null && pages < 50) {
+            try {
+                val response = client.get(url) {
+                    header("Accept", "application/vnd.github+json")
+                    if (token != null) header("Authorization", "token $token")
                 }
+                if (response.status != HttpStatusCode.OK) break
+                out += response.body<List<GitHubRelease>>()
+                url = parseNextLink(response.headers["Link"])
+                pages++
+            } catch (_: Exception) {
+                break
             }
-            if (response.status == HttpStatusCode.OK) response.body<List<GitHubRelease>>() else emptyList()
-        } catch (_: Exception) {
-            emptyList()
         }
+        return out
+    }
+
+    private val linkNextRegex = Regex("""<([^>]+)>;\s*rel="next"""")
+
+    private fun parseNextLink(linkHeader: String?): String? {
+        if (linkHeader.isNullOrBlank()) return null
+        return linkNextRegex.find(linkHeader)?.groupValues?.getOrNull(1)
     }
 
     private fun detectPlatforms(release: GitHubRelease): Map<String, Boolean> {
