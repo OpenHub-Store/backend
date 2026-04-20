@@ -17,12 +17,21 @@ class RepoRepository {
     }
 
     fun findByCategory(category: String, platform: String, limit: Int = 50): List<RepoResponse> = transaction {
+        // Primary: dynamic behavioral search_score (updated hourly by
+        // SignalAggregationWorker from clicks / installs / stars / freshness).
+        // Tie-breaker: the static rank the Python fetcher writes once a day,
+        // which preserves the category's semantic flavor (trending stays
+        // velocity-flavored, new-releases stays recency-flavored, etc.) when
+        // two repos have similar behavioral scores.
         Repos.innerJoin(RepoCategories, { id }, { repoId })
             .selectAll()
             .where {
                 (RepoCategories.category eq category) and (RepoCategories.platform eq platform)
             }
-            .orderBy(RepoCategories.rank to SortOrder.ASC)
+            .orderBy(
+                Repos.searchScore to SortOrder.DESC_NULLS_LAST,
+                RepoCategories.rank to SortOrder.ASC,
+            )
             .limit(limit)
             .map { it.toRepoResponse(category = category) }
     }
@@ -33,7 +42,10 @@ class RepoRepository {
             .where {
                 (RepoTopicBuckets.bucket eq bucket) and (RepoTopicBuckets.platform eq platform)
             }
-            .orderBy(RepoTopicBuckets.rank to SortOrder.ASC)
+            .orderBy(
+                Repos.searchScore to SortOrder.DESC_NULLS_LAST,
+                RepoTopicBuckets.rank to SortOrder.ASC,
+            )
             .limit(limit)
             .map { it.toRepoResponse() }
     }
