@@ -7,6 +7,7 @@ import zed.rainxch.githubstore.db.RepoRepository
 import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.SearchMissWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
@@ -20,5 +21,6 @@ val appModule = module {
     single { GitHubSearchClient(get()) }
     single { SearchMissWorker(get(), get()) }
     single { SignalAggregationWorker(get()) }
+    single { RepoRefreshWorker(get()) }
     single { SearchMetricsRegistry() }
 }

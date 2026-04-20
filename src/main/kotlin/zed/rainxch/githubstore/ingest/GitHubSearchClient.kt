@@ -281,6 +281,48 @@ class GitHubSearchClient(
         return linkNextRegex.find(linkHeader)?.groupValues?.getOrNull(1)
     }
 
+    // Re-fetch an existing repo's metadata + releases for RepoRefreshWorker.
+    // Returns null if the repo is gone (404), archived, or has no installable
+    // release — the caller uses that to soft-delete / mark stale.
+    internal suspend fun refreshRepo(fullName: String, token: String? = githubToken): RefreshResult {
+        val metaResponse = try {
+            client.get("https://api.github.com/repos/$fullName") {
+                header("Accept", "application/vnd.github+json")
+                if (token != null) header("Authorization", "token $token")
+            }
+        } catch (_: Exception) {
+            return RefreshResult.TransientFailure
+        }
+        if (metaResponse.status == HttpStatusCode.NotFound) return RefreshResult.Gone
+        if (metaResponse.status != HttpStatusCode.OK) return RefreshResult.TransientFailure
+        val repo = metaResponse.body<GitHubRepo>()
+        if (repo.archived || repo.disabled) return RefreshResult.Archived
+
+        val releases = fetchAllReleases(fullName, token)
+        val latest = releases.firstOrNull { !it.draft && !it.prerelease }
+            ?: return RefreshResult.NoUsableRelease(repo)
+        val platformFlags = detectPlatforms(latest)
+        val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
+        return RefreshResult.Ok(RepoWithRelease(repo, latest, platformFlags, downloadCount))
+    }
+
+    // Writes a single RepoWithRelease to Postgres + schedules Meili sync.
+    // Exposed for RepoRefreshWorker so it doesn't duplicate upsert plumbing.
+    internal fun persist(refreshed: RepoWithRelease) {
+        ingestToPostgres(listOf(refreshed))
+        persistenceScope.launch {
+            syncToMeilisearch(listOf(refreshed))
+        }
+    }
+
+    internal sealed class RefreshResult {
+        data class Ok(val repo: RepoWithRelease) : RefreshResult()
+        object Gone : RefreshResult()
+        object Archived : RefreshResult()
+        data class NoUsableRelease(val repo: GitHubRepo) : RefreshResult()
+        object TransientFailure : RefreshResult()
+    }
+
     private fun detectPlatforms(release: GitHubRelease): Map<String, Boolean> {
         val assetNames = release.assets.map { it.name.lowercase() }
         return mapOf(
@@ -374,7 +416,7 @@ class GitHubSearchClient(
         }
     }
 
-    private data class RepoWithRelease(
+    internal data class RepoWithRelease(
         val repo: GitHubRepo,
         val release: GitHubRelease,
         val platformFlags: Map<String, Boolean>,
