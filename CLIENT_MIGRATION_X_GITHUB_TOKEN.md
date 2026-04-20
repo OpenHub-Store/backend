@@ -58,6 +58,32 @@ When a search has fewer than 5 local results, the backend falls back to searchin
 5. Disconnect the account and repeat step 2. Confirm the header is absent from the request. The response should still succeed (just may be slower or lower-quota).
 6. Check logs/crash reports after a full session: grep for the token string — zero hits.
 
+## Timeouts on `/v1/search/explore`
+
+This endpoint fans out to GitHub's releases API and paginates per repo. Cold-path latency is routinely 10–30 seconds on the first call for a megaproject (projects with 1000+ releases). Configure this endpoint's socket and request timeouts to **30 seconds** explicitly — the default 5-second client timeout will reliably fail with `SocketTimeoutException`.
+
+```kotlin
+httpClient.get("$backendBaseUrl/v1/search/explore") {
+    timeout { requestTimeoutMillis = 30_000; socketTimeoutMillis = 30_000 }
+    parameter("q", query)
+    parameter("page", page)
+    if (!token.isNullOrBlank()) header("X-GitHub-Token", token)
+}
+```
+
+`/v1/search` itself stays on the normal 5-second budget.
+
+## Interpreting empty results on `/v1/search`
+
+The response now carries a `passthroughAttempted: Boolean` field. Use it to branch zero-result UX:
+
+- `items=[], passthroughAttempted=true` → GitHub's live search also found nothing. Show "No repositories found."
+- `items=[], passthroughAttempted=false` → index was warm with no hits, but the backend didn't fire the GitHub passthrough (e.g. `offset > 0`). Offer the user an explicit "Find more on GitHub" action that calls `/v1/search/explore`.
+
+## Known discovery limit
+
+Repos with fewer than ~10 GitHub stars that aren't already in our curated index may not surface through text search, because they get ranked below larger library projects even on an exact-name query. The backend now runs a second `in:name`-biased pass when the primary pass yields zero installables, which recovers most niche apps — but some very new / unknown repos will still be invisible until they accumulate more stars or appear in a curated topic run. Client UX should not assume every GitHub repo is findable via search.
+
 ## Out of scope for this migration
 
 - The `/v1/events` telemetry endpoint.
