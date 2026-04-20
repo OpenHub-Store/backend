@@ -97,26 +97,14 @@ class GitHubSearchClient(
             if (queryIsBlocked(query)) return emptyList()
 
             val token = userToken ?: githubToken
-            val repos = searchGitHub(query, limit = 30, page = 1, minStars = 10, token = token)
-            if (repos.isEmpty()) return emptyList()
-
-            // Check which repos have releases with installers — fetch in parallel
-            val candidates = repos.filterNot { repoIsBlocked(it) }
-            val withInstallers = coroutineScope {
-                candidates.map { repo ->
-                    async {
-                        val releases = fetchAllReleases(repo.fullName, token)
-                        val latest = releases.firstOrNull { !it.draft && !it.prerelease }
-                            ?: return@async null
-                        val platformFlags = detectPlatforms(latest)
-                        if (platformFlags.none { it.value }) return@async null
-                        if (platform != null && platformFlags[platform] != true) return@async null
-                        val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
-                        RepoWithRelease(repo, latest, platformFlags, downloadCount)
-                    }
-                }.awaitAll()
-            }.filterNotNull().take(limit)
-
+            var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
+            // When the stars-sorted pass yields nothing installable, try an
+            // in:name pass. Lets genuinely niche literal-name matches (e.g. a
+            // 12-star app whose repo IS the query) surface past the library
+            // projects that dominate general best-match rankings.
+            if (withInstallers.isEmpty()) {
+                withInstallers = runPass(query, platform, limit, token, nameMatch = true)
+            }
             if (withInstallers.isEmpty()) return emptyList()
 
             // Persist asynchronously — the response doesn't wait for Postgres/Meili.
@@ -192,18 +180,61 @@ class GitHubSearchClient(
         }
     }
 
+    private suspend fun runPass(
+        query: String,
+        platform: String?,
+        limit: Int,
+        token: String?,
+        nameMatch: Boolean,
+    ): List<RepoWithRelease> {
+        val repos = searchGitHub(
+            query = query,
+            limit = 30,
+            page = 1,
+            minStars = if (nameMatch) 5 else 10,
+            token = token,
+            nameMatch = nameMatch,
+        )
+        if (repos.isEmpty()) return emptyList()
+        val candidates = repos.filterNot { repoIsBlocked(it) }
+        return coroutineScope {
+            candidates.map { repo ->
+                async {
+                    val releases = fetchAllReleases(repo.fullName, token)
+                    val latest = releases.firstOrNull { !it.draft && !it.prerelease }
+                        ?: return@async null
+                    val platformFlags = detectPlatforms(latest)
+                    if (platformFlags.none { it.value }) return@async null
+                    if (platform != null && platformFlags[platform] != true) return@async null
+                    val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
+                    RepoWithRelease(repo, latest, platformFlags, downloadCount)
+                }
+            }.awaitAll()
+        }.filterNotNull().take(limit)
+    }
+
     private suspend fun searchGitHub(
         query: String,
         limit: Int,
         page: Int = 1,
         minStars: Int = 10,
         token: String? = githubToken,
+        nameMatch: Boolean = false,
     ): List<GitHubRepo> {
+        val qParts = buildList {
+            add(query)
+            if (nameMatch) add("in:name")
+            add("stars:>=$minStars")
+            add("fork:true")
+        }
         val response = client.get("https://api.github.com/search/repositories") {
             // fork:true includes both forks and non-forks.
             // Abandoned forks get filtered out later by installer release + star checks.
-            parameter("q", "$query stars:>=$minStars fork:true")
-            parameter("sort", "stars")
+            parameter("q", qParts.joinToString(" "))
+            // in:name passes rely on GitHub's default best-match so literal
+            // name matches surface first. The generic pass sorts by stars to
+            // favor popular apps.
+            if (!nameMatch) parameter("sort", "stars")
             parameter("per_page", limit)
             parameter("page", page)
             header("Accept", "application/vnd.github+json")
