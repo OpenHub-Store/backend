@@ -66,9 +66,11 @@ fun Route.searchRoutes(
             var items = result.hits.map { it.toRepoResponse() }
             var totalHits = result.estimatedTotalHits
             var source = "meilisearch"
+            var passthroughAttempted = false
 
             // On-demand: if few results, also search GitHub and ingest
             if (items.size < ON_DEMAND_THRESHOLD && offset == 0) {
+                passthroughAttempted = true
                 val githubResults = githubSearch.searchAndIngest(query, platform, limit = 10, userToken = userToken)
                 if (githubResults.isNotEmpty()) {
                     // Merge: existing items first, then GitHub results (deduped by id)
@@ -98,6 +100,7 @@ fun Route.searchRoutes(
                 totalHits = totalHits,
                 processingTimeMs = result.processingTimeMs,
                 source = source,
+                passthroughAttempted = passthroughAttempted,
             ))
         } catch (e: Exception) {
             // Meilisearch down — fall back to Postgres FTS
