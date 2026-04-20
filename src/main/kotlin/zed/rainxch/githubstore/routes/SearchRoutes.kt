@@ -78,9 +78,10 @@ fun Route.searchRoutes(
                 }
             }
 
-            // Log search miss if still 0 results after GitHub passthrough
-            if (items.isEmpty()) {
-                searchMissRepository.logMiss(query)
+            // Log near-misses too — queries with 1-4 results are tractable training
+            // candidates; the worker prioritizes zero-result rows via result_count.
+            if (items.size < ON_DEMAND_THRESHOLD) {
+                searchMissRepository.logMiss(query, resultCount = items.size)
             }
 
             call.response.header(HttpHeaders.CacheControl, "public, max-age=15, s-maxage=30")
