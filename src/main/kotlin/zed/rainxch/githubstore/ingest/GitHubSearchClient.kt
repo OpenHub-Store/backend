@@ -178,8 +178,13 @@ class GitHubSearchClient(
                 }
             }
 
-            // hasMore = true if GitHub returned a full page (more pages may exist)
-            val hasMore = repos.size >= 10
+            // hasMore signals "worth asking for another page". A full raw page
+            // that filtered down to zero installables almost always means
+            // subsequent pages (same sort order, similar repos) will too — so
+            // flip hasMore false when the installable yield is empty. Prevents
+            // the client from looping forever on queries like "insta" where
+            // everything matches text but nothing ships with installers.
+            val hasMore = repos.size >= 10 && withInstallers.isNotEmpty()
             return ExploreResult(withInstallers.map { it.toRepoResponse() }, hasMore = hasMore)
         } catch (e: Exception) {
             log.warn("Explore failed for query '{}' page {}: {}", query, page, e.message)
