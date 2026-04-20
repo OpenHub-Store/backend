@@ -73,10 +73,14 @@ fun Route.searchRoutes(
                 passthroughAttempted = true
                 val githubResults = githubSearch.searchAndIngest(query, platform, limit = 10, userToken = userToken)
                 if (githubResults.isNotEmpty()) {
-                    // Merge: existing items first, then GitHub results (deduped by id)
+                    // Merge and re-sort by stars descending. Without this, a
+                    // freshly-ingested megaproject lands below a 50-star indexed
+                    // repo just because passthrough hits are appended after Meili's.
+                    // Stars gives a consistent popularity tier across both sources
+                    // (passthrough items haven't earned a search_score yet).
                     val existingIds = items.map { it.id }.toSet()
                     val newItems = githubResults.filter { it.id !in existingIds }
-                    items = items + newItems
+                    items = (items + newItems).sortedByDescending { it.stargazersCount }
                     totalHits = items.size
                     source = if (items.size > result.hits.size) "meilisearch+github" else "meilisearch"
                 }
