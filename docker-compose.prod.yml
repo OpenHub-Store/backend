@@ -41,11 +41,20 @@ services:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       SENTRY_DSN: ${SENTRY_DSN}
-      # Fallback token for the on-demand GitHub passthrough when the client
-      # doesn't send X-GitHub-Token. Reuses the fetcher's existing pool so no
-      # new secret needs to live in .env — just has to be an authenticated PAT
-      # so the worker/passthrough doesn't hit the 10/min unauthenticated limit.
+      # Fallback token for the on-demand GitHub passthrough + background
+      # workers when the client doesn't send X-GitHub-Token. Used alone during
+      # the daily fetcher's quiet window (default 01:00–04:00 UTC) so the
+      # Python fetcher gets the full 4-token pool during its run.
       GITHUB_TOKEN: ${GH_TOKEN_TOPICS}
+      # Rotation pool. Outside the quiet window, the backend round-robins
+      # across these so user traffic doesn't concentrate on any one token.
+      GH_TOKEN_TRENDING: ${GH_TOKEN_TRENDING}
+      GH_TOKEN_NEW_RELEASES: ${GH_TOKEN_NEW_RELEASES}
+      GH_TOKEN_MOST_POPULAR: ${GH_TOKEN_MOST_POPULAR}
+      GH_TOKEN_TOPICS: ${GH_TOKEN_TOPICS}
+      # Quiet-window UTC hours. Change if the fetcher schedule moves.
+      TOKEN_QUIET_START_UTC: "1"
+      TOKEN_QUIET_END_UTC: "4"
     depends_on:
       postgres:
         condition: service_healthy

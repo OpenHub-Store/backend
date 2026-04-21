@@ -27,16 +27,64 @@ import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.ranking.SearchScore
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class GitHubSearchClient(
     private val meilisearchClient: zed.rainxch.githubstore.db.MeilisearchClient,
 ) {
     private val log = LoggerFactory.getLogger(GitHubSearchClient::class.java)
 
-    // Use any available token — the backend doesn't need a dedicated PAT,
-    // unauthenticated gets 10 req/min which is enough for on-demand
-    private val githubToken: String? = System.getenv("GITHUB_TOKEN")
+    // Single fallback token used in two cases:
+    //   1. When the rotation pool is empty (no GH_TOKEN_* set)
+    //   2. During the fetcher's quiet window (see below), so the full rotation
+    //      pool is free for the daily fetch + meili_sync to consume.
+    private val githubToken: String? = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() }
+
+    // Rotation pool reusing the same tokens the Python fetcher uses. Outside
+    // the quiet window, the backend's fallback passthrough + workers
+    // round-robin across these to spread load.
+    private val tokenPool: List<String> = listOf(
+        System.getenv("GH_TOKEN_TRENDING"),
+        System.getenv("GH_TOKEN_NEW_RELEASES"),
+        System.getenv("GH_TOKEN_MOST_POPULAR"),
+        System.getenv("GH_TOKEN_TOPICS"),
+    ).mapNotNull { it?.takeIf { s -> s.isNotBlank() } }
+
+    private val rotationCursor = AtomicInteger(0)
+
+    // Quiet window (UTC hours): the backend avoids the rotation pool during
+    // this range so the Python fetcher's daily run gets the full 4-token
+    // quota. Default 01:00–04:00 covers "1 hour before + ~2 hour run" for
+    // the 02:00 UTC daily fetch. Override via env if the schedule changes.
+    private val quietStartUtcHour: Int =
+        System.getenv("TOKEN_QUIET_START_UTC")?.toIntOrNull() ?: 1
+    private val quietEndUtcHour: Int =
+        System.getenv("TOKEN_QUIET_END_UTC")?.toIntOrNull() ?: 4
+
+    private fun isQuietWindowNow(): Boolean {
+        val h = OffsetDateTime.now(ZoneOffset.UTC).hour
+        return if (quietStartUtcHour <= quietEndUtcHour) {
+            h in quietStartUtcHour until quietEndUtcHour
+        } else {
+            // Window wraps midnight (e.g. start=23, end=4).
+            h >= quietStartUtcHour || h < quietEndUtcHour
+        }
+    }
+
+    // Central fallback token selector. Called whenever a request doesn't carry
+    // X-GitHub-Token (i.e. passthrough, SignalAggregationWorker,
+    // SearchMissWorker, RepoRefreshWorker — everything that shares the
+    // backend's own quota).
+    private fun pickFallbackToken(): String? {
+        if (isQuietWindowNow()) return githubToken
+        if (tokenPool.isEmpty()) return githubToken
+        val idx = rotationCursor.getAndIncrement().rem(tokenPool.size).let {
+            if (it < 0) it + tokenPool.size else it
+        }
+        return tokenPool[idx]
+    }
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -98,7 +146,7 @@ class GitHubSearchClient(
         try {
             if (queryIsBlocked(query)) return emptyList()
 
-            val token = userToken ?: githubToken
+            val token = userToken ?: pickFallbackToken()
             var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
             // When the stars-sorted pass yields nothing installable, try an
             // in:name pass. Lets genuinely niche literal-name matches (e.g. a
@@ -136,7 +184,7 @@ class GitHubSearchClient(
         try {
             if (queryIsBlocked(query)) return ExploreResult(emptyList(), hasMore = false)
 
-            val token = userToken ?: githubToken
+            val token = userToken ?: pickFallbackToken()
             // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
             val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, token = token)
             if (repos.isEmpty()) return ExploreResult(emptyList(), hasMore = false)
@@ -220,7 +268,7 @@ class GitHubSearchClient(
         limit: Int,
         page: Int = 1,
         minStars: Int = 10,
-        token: String? = githubToken,
+        token: String? = pickFallbackToken(),
         nameMatch: Boolean = false,
     ): List<GitHubRepo> {
         val qParts = buildList {
@@ -253,7 +301,7 @@ class GitHubSearchClient(
     // aggregate download_count across every asset of every release — matches
     // what shields.io shows. Bounded at 50 pages (5000 releases) so a
     // pathological repo can't hang us.
-    private suspend fun fetchAllReleases(fullName: String, token: String? = githubToken): List<GitHubRelease> {
+    private suspend fun fetchAllReleases(fullName: String, token: String? = pickFallbackToken()): List<GitHubRelease> {
         val out = mutableListOf<GitHubRelease>()
         var url: String? = "https://api.github.com/repos/$fullName/releases?per_page=100"
         var pages = 0
@@ -284,7 +332,7 @@ class GitHubSearchClient(
     // Re-fetch an existing repo's metadata + releases for RepoRefreshWorker.
     // Returns null if the repo is gone (404), archived, or has no installable
     // release — the caller uses that to soft-delete / mark stale.
-    internal suspend fun refreshRepo(fullName: String, token: String? = githubToken): RefreshResult {
+    internal suspend fun refreshRepo(fullName: String, token: String? = pickFallbackToken()): RefreshResult {
         val metaResponse = try {
             client.get("https://api.github.com/repos/$fullName") {
                 header("Accept", "application/vnd.github+json")
