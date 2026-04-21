@@ -1,4 +1,30 @@
+# Primary hostname. Normally fronted by Gcore CDN for global + China-rim
+# performance. Caddy still issues a Let's Encrypt cert here so the origin
+# responds correctly if Gcore ever passes TLS through, and so we can cut
+# traffic over to direct-to-origin quickly in an outage.
 api.github-store.org {
+    reverse_proxy app:8080
+
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+    }
+
+    log {
+        output stdout
+    }
+}
+
+# Direct-to-origin fallback hostname. Bypasses any CDN — points straight at
+# the Hetzner IP. Used as:
+#   (a) diagnostic when something's wrong with the CDN path,
+#   (b) client-side fallback when the CDN-fronted primary times out
+#       (valuable for users on networks where Cloudflare/Gcore IPs are
+#       throttled, e.g. some Chinese ISPs),
+#   (c) origin for the Gcore CDN itself, so Gcore can pull over HTTPS
+#       with a properly-issued cert instead of accepting a self-signed one.
+api-direct.github-store.org {
     reverse_proxy app:8080
 
     header {

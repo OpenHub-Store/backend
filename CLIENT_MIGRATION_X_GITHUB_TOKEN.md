@@ -84,6 +84,32 @@ The response now carries a `passthroughAttempted: Boolean` field. Use it to bran
 
 Repos with fewer than ~10 GitHub stars that aren't already in our curated index may not surface through text search, because they get ranked below larger library projects even on an exact-name query. The backend now runs a second `in:name`-biased pass when the primary pass yields zero installables, which recovers most niche apps — but some very new / unknown repos will still be invisible until they accumulate more stars or appear in a curated topic run. Client UX should not assume every GitHub repo is findable via search.
 
+## Direct-to-origin fallback host (CDN-restricted users)
+
+Some user networks throttle or block the CDN IPs fronting `api.github-store.org` — most commonly Chinese ISPs that flag shared-IP CDN ranges regardless of the content on them. For those users the backend is reachable at a second hostname that bypasses the CDN entirely:
+
+- **Primary**: `https://api.github-store.org` — CDN-fronted, global caching, DDoS shielding
+- **Fallback**: `https://api-direct.github-store.org` — direct to the Hetzner origin
+
+Both hostnames serve **identical responses** on every path; the fallback is purely a network-path override. When the primary times out or returns a non-response (connection reset, DNS fail, 5xx twice in a row), retry the exact same request against `api-direct.github-store.org` once before surfacing an error to the user.
+
+```kotlin
+private val primaryBase = "https://api.github-store.org"
+private val fallbackBase = "https://api-direct.github-store.org"
+
+suspend fun backendCall(path: String, build: HttpRequestBuilder.() -> Unit = {}): HttpResponse {
+    return try {
+        httpClient.get("$primaryBase$path", build)
+    } catch (e: IOException) {
+        httpClient.get("$fallbackBase$path", build)
+    } catch (e: HttpRequestTimeoutException) {
+        httpClient.get("$fallbackBase$path", build)
+    }
+}
+```
+
+Once the fallback works for a given device, remember that preference for the rest of the session (or ~24h) so you don't re-attempt the primary on every request — but always start the next cold session with the primary, because the CDN might be reachable again.
+
 ## Out of scope for this migration
 
 - The `/v1/events` telemetry endpoint.
