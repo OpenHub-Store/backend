@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import io.sentry.Sentry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.exposed.sql.transactions.TransactionManager
@@ -48,6 +49,7 @@ class SignalAggregationWorker(
                 runCycle()
             } catch (e: Exception) {
                 log.error("Signal aggregation cycle failed", e)
+                Sentry.captureException(e)
             }
             delay(cycleInterval)
         }

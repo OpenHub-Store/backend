@@ -1,5 +1,6 @@
 package zed.rainxch.githubstore.ingest
 
+import io.sentry.Sentry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,6 +47,7 @@ class RepoRefreshWorker(
                 processBatch()
             } catch (e: Exception) {
                 log.error("Repo refresh cycle failed", e)
+                Sentry.captureException(e)
             }
             delay(cycleInterval)
         }
