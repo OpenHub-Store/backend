@@ -73,6 +73,24 @@ ktor {
     }
 }
 
+// Write the project version to a resource file so the app can surface it at
+// runtime (/v1/health, Sentry release tag, dashboard header). Single source
+// of truth — bump `version` at the top of this file, rebuild, everything
+// picks it up.
+val generateBuildInfo = tasks.register("generateBuildInfo") {
+    val outputDir = layout.buildDirectory.dir("generated/resources/buildinfo")
+    val v = project.version.toString()
+    outputs.dir(outputDir)
+    inputs.property("version", v)
+    doLast {
+        val file = outputDir.get().asFile.resolve("buildinfo.properties")
+        file.parentFile.mkdirs()
+        file.writeText("version=$v\n")
+    }
+}
+
+sourceSets["main"].resources.srcDir(generateBuildInfo)
+
 kotlin {
     jvmToolchain(21)
 }

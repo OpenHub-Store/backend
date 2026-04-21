@@ -4,6 +4,7 @@ import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import org.jetbrains.exposed.sql.transactions.transaction
+import zed.rainxch.githubstore.BuildInfo
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.model.HealthResponse
 
@@ -30,7 +31,7 @@ fun Route.healthRoutes(meilisearch: MeilisearchClient) {
                 status = status,
                 postgres = postgresStatus,
                 meilisearch = meilisearchStatus,
-                version = "0.1.0",
+                version = BuildInfo.version,
             )
         )
     }
