@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.postgresql.util.PSQLException
 import org.slf4j.LoggerFactory
 
 object DatabaseFactory {
@@ -66,12 +67,34 @@ object DatabaseFactory {
                     ?.bufferedReader()?.readText() ?: continue
                 try {
                     exec(sql)
-                } catch (_: Exception) {
-                    // Column/table already exists — safe to ignore
+                } catch (e: Exception) {
+                    // Only swallow "already exists" style failures from re-running
+                    // an additive migration. Any other error (syntax, constraint
+                    // violation, permissions) must crash startup — a silent partial
+                    // schema is worse than no server.
+                    val sqlState = (e as? PSQLException)?.sqlState
+                        ?: (e.cause as? PSQLException)?.sqlState
+                    if (sqlState in IGNORABLE_MIGRATION_SQLSTATES) {
+                        log.info("Migration $migration: idempotent skip (sqlState=$sqlState)")
+                    } else {
+                        throw IllegalStateException(
+                            "Migration $migration failed (sqlState=$sqlState): ${e.message}",
+                            e,
+                        )
+                    }
                 }
             }
         }
     }
+
+    // SQLSTATEs that indicate "the thing you're trying to add is already there":
+    //   42701 duplicate_column, 42P07 duplicate_table,
+    //   42710 duplicate_object, 42P16 invalid_table_definition (covers some
+    //   CREATE INDEX IF NOT EXISTS races), 23505 unique_violation (for seed
+    //   data INSERT ... ON CONFLICT paths).
+    private val IGNORABLE_MIGRATION_SQLSTATES = setOf(
+        "42701", "42P07", "42710", "42P16", "23505",
+    )
 
     private fun env(name: String, default: String): String =
         System.getenv(name) ?: default
