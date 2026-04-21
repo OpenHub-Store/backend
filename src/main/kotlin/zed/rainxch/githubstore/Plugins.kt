@@ -14,6 +14,7 @@ import io.ktor.server.response.*
 import io.sentry.Sentry
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -68,6 +69,27 @@ fun Application.configureHTTP() {
         // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
         register(RateLimitName("search")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["CF-Connecting-IP"]
+                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                    ?: "unknown"
+            }
+        }
+        // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
+        // keeps abuse impossible without blocking legitimate retries after a
+        // failed or cancelled flow.
+        register(RateLimitName("auth-start")) {
+            rateLimiter(limit = 10, refillPeriod = 1.hours)
+            requestKey { call ->
+                call.request.headers["CF-Connecting-IP"]
+                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                    ?: "unknown"
+            }
+        }
+        // Auth device-flow poll: a real flow is ~180 polls over 15min at 5s
+        // intervals, so 200/hr/IP fits one full flow plus a small margin.
+        register(RateLimitName("auth-poll")) {
+            rateLimiter(limit = 200, refillPeriod = 1.hours)
             requestKey { call ->
                 call.request.headers["CF-Connecting-IP"]
                     ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
