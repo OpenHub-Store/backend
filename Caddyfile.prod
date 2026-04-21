@@ -3,6 +3,11 @@
 # responds correctly if Gcore ever passes TLS through, and so we can cut
 # traffic over to direct-to-origin quickly in an outage.
 api.github-store.org {
+    # Overwrite any client-supplied X-Forwarded-For with the real TCP source.
+    # Without this a client who forges X-Forwarded-For can rotate past the
+    # app's rate-limiter (which keys on X-Forwarded-For's first IP).
+    request_header X-Forwarded-For {remote_host}
+
     reverse_proxy app:8080
 
     header {
@@ -25,6 +30,11 @@ api.github-store.org {
 #   (c) origin for the Gcore CDN itself, so Gcore can pull over HTTPS
 #       with a properly-issued cert instead of accepting a self-signed one.
 api-direct.github-store.org {
+    # Overwrite any client-supplied X-Forwarded-For with the real TCP source.
+    # Without this a client who forges X-Forwarded-For can rotate past the
+    # app's rate-limiter (which keys on X-Forwarded-For's first IP).
+    request_header X-Forwarded-For {remote_host}
+
     reverse_proxy app:8080
 
     header {
