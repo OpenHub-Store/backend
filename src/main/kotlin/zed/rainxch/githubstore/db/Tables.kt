@@ -2,6 +2,7 @@ package zed.rainxch.githubstore.db
 
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.TextColumnType
+import org.jetbrains.exposed.sql.kotlin.datetime.date
 import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 
 object Repos : Table("repos") {
@@ -73,7 +74,7 @@ object Events : Table("events") {
 
 object RepoStatsDaily : Table("repo_stats_daily") {
     val repoId = long("repo_id").references(Repos.id)
-    val date = text("date") // DATE as text, Flyway handles the real type
+    val date = date("date")
     val views = integer("views").nullable()
     val searchesHit = integer("searches_hit").nullable()
     val installsStarted = integer("installs_started").nullable()
