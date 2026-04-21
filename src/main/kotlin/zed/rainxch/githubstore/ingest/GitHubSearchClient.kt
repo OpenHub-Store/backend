@@ -3,6 +3,7 @@ package zed.rainxch.githubstore.ingest
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
@@ -89,6 +90,14 @@ class GitHubSearchClient(
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
+        }
+        // Without these, a stalled GitHub call could hang a request handler
+        // and its Hikari connection indefinitely. 15s is a generous ceiling —
+        // GitHub's p99 is sub-second for both search and release-list calls.
+        install(HttpTimeout) {
+            requestTimeoutMillis = 15_000
+            connectTimeoutMillis = 5_000
+            socketTimeoutMillis = 15_000
         }
     }
 
