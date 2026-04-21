@@ -151,6 +151,10 @@ fun Route.searchRoutes(
 
         val result = githubSearch.explore(query, platform, page, userToken = userToken)
 
+        // Explore is idempotent for (q, platform, page) so edge caching 60s saves
+        // real GitHub API work on hot queries. Shorter browser cache (30s) since
+        // the index is updating underneath us.
+        call.response.header(HttpHeaders.CacheControl, "public, max-age=30, s-maxage=60")
         call.respond(ExploreResponse(
             items = result.items,
             page = page,
