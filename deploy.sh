@@ -25,6 +25,12 @@ rsync -avz --delete \
 echo "==> Building and starting services..."
 ssh "$SSH_USER@$SERVER_IP" "cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml up -d --build"
 
+# Caddyfile is mounted as a volume, so changes on disk don't auto-reload the
+# running Caddy process. Gracefully reload if the file changed since last deploy.
+# (Reload, not restart — avoids a TLS reconnect blip for live traffic.)
+echo "==> Reloading Caddy config..."
+ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-caddy-1 caddy reload --config /etc/caddy/Caddyfile || docker compose -f $REMOTE_DIR/docker-compose.prod.yml restart caddy"
+
 echo "==> Waiting for health check..."
 sleep 15
 ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-app-1 curl -sf http://localhost:8080/v1/health || echo 'Health check failed!'"
