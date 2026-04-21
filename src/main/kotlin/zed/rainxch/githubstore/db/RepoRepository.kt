@@ -4,6 +4,7 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
+import zed.rainxch.githubstore.util.formatRecency
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 
@@ -89,9 +90,4 @@ class RepoRepository {
         )
     }
 
-    private fun formatRecency(days: Int): String = when (days) {
-        0 -> "Released today"
-        1 -> "Released yesterday"
-        else -> "Released $days days ago"
-    }
 }

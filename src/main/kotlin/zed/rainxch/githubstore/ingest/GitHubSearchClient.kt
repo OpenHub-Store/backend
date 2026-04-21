@@ -28,6 +28,7 @@ import zed.rainxch.githubstore.db.Repos
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.ranking.SearchScore
+import zed.rainxch.githubstore.util.formatRecency
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -118,11 +119,11 @@ class GitHubSearchClient(
     // handlers. 4 keeps plenty of pool capacity for live requests.
     private val persistenceGate = Semaphore(permits = 4)
 
-    private val installerExtensions = listOf(
-        ".apk", ".aab",                          // Android
-        ".exe", ".msi", ".msix",                  // Windows
-        ".dmg", ".pkg",                           // macOS
-        ".appimage", ".deb", ".rpm", ".flatpak",  // Linux
+    private val platformExtensions = mapOf(
+        "android" to listOf(".apk", ".aab"),
+        "windows" to listOf(".exe", ".msi", ".msix"),
+        "macos"   to listOf(".dmg", ".pkg"),
+        "linux"   to listOf(".appimage", ".deb", ".rpm", ".flatpak"),
     )
 
     // NSFW blocklist — mirrors the Python fetcher's BLOCKED_TOPICS.
@@ -396,12 +397,9 @@ class GitHubSearchClient(
 
     private fun detectPlatforms(release: GitHubRelease): Map<String, Boolean> {
         val assetNames = release.assets.map { it.name.lowercase() }
-        return mapOf(
-            "android" to assetNames.any { name -> installerExtensions.filter { it in listOf(".apk", ".aab") }.any { name.endsWith(it) } },
-            "windows" to assetNames.any { name -> installerExtensions.filter { it in listOf(".exe", ".msi", ".msix") }.any { name.endsWith(it) } },
-            "macos" to assetNames.any { name -> installerExtensions.filter { it in listOf(".dmg", ".pkg") }.any { name.endsWith(it) } },
-            "linux" to assetNames.any { name -> installerExtensions.filter { it in listOf(".appimage", ".deb", ".rpm", ".flatpak") }.any { name.endsWith(it) } },
-        )
+        return platformExtensions.mapValues { (_, exts) ->
+            assetNames.any { name -> exts.any { name.endsWith(it) } }
+        }
     }
 
     // Returns a map of repo_id → search_score for the repos just upserted,
@@ -533,13 +531,7 @@ class GitHubSearchClient(
                 latestReleaseDate = releaseDateStr,
                 latestReleaseTag = release.tagName,
                 releaseRecency = recencyDays,
-                releaseRecencyText = recencyDays?.let {
-                    when (it) {
-                        0 -> "Released today"
-                        1 -> "Released yesterday"
-                        else -> "Released $it days ago"
-                    }
-                },
+                releaseRecencyText = recencyDays?.let { formatRecency(it) },
                 downloadCount = downloadCount,
                 hasInstallersAndroid = platformFlags["android"] ?: false,
                 hasInstallersWindows = platformFlags["windows"] ?: false,
