@@ -14,13 +14,15 @@ import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.routes.configureRouting
 
 fun main() {
+    validateProductionEnv()
+
     val sentryDsn = System.getenv("SENTRY_DSN")
     if (!sentryDsn.isNullOrBlank()) {
         Sentry.init { options ->
             options.dsn = sentryDsn
             options.tracesSampleRate = 0.1
             options.environment = System.getenv("APP_ENV") ?: "production"
-            options.release = "github-store-backend@0.1.0"
+            options.release = "github-store-backend@${BuildInfo.version}"
         }
     }
 
@@ -52,4 +54,30 @@ fun Application.module() {
 
     val repoRefreshWorker by inject<RepoRefreshWorker>()
     repoRefreshWorker.start()
+}
+
+// Under APP_ENV=production, refuse to start unless the critical secrets are
+// set explicitly. Otherwise dev defaults (password "githubstore", "devkey",
+// etc.) could silently bind a production deploy to a local Postgres/Meili
+// that happens to be reachable. Required list is intentionally narrow to
+// keep dev iteration friction-free.
+private fun validateProductionEnv() {
+    if (System.getenv("APP_ENV") != "production") return
+    val required = listOf(
+        "DATABASE_URL",
+        "DATABASE_PASSWORD",
+        "MEILI_URL",
+        "MEILI_MASTER_KEY",
+        "GITHUB_OAUTH_CLIENT_ID",
+    )
+    val missing = required.filter { System.getenv(it).isNullOrBlank() }
+    if (missing.isNotEmpty()) {
+        System.err.println(
+            "FATAL: missing required env vars under APP_ENV=production: $missing"
+        )
+        throw IllegalStateException(
+            "Missing required env vars: $missing. " +
+                "Set them in /opt/github-store-backend/.env before deploy."
+        )
+    }
 }
