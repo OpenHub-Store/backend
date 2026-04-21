@@ -11,6 +11,7 @@ class SearchMetricsRegistry {
     private val meiliOnlyCount = AtomicLong(0)
     private val passthroughCount = AtomicLong(0)
     private val postgresFallbackCount = AtomicLong(0)
+    private val exploreCount = AtomicLong(0)
     private val zeroResultCount = AtomicLong(0)
     private val totalLatencyMs = AtomicLong(0)
     private val totalLatencySamples = AtomicLong(0)
@@ -31,6 +32,14 @@ class SearchMetricsRegistry {
         record(resultCount, elapsedMs)
     }
 
+    // User-triggered "search more from GitHub" — separate from passthrough
+    // (which is backend-triggered when Meili returns <5). Tracked as its own
+    // counter so the dashboard can show explicit user exploration volume.
+    fun recordExplore(resultCount: Int, elapsedMs: Int) {
+        exploreCount.incrementAndGet()
+        record(resultCount, elapsedMs)
+    }
+
     private fun record(resultCount: Int, elapsedMs: Int) {
         if (resultCount == 0) zeroResultCount.incrementAndGet()
         totalLatencyMs.addAndGet(elapsedMs.toLong())
@@ -44,6 +53,7 @@ class SearchMetricsRegistry {
             meiliOnly = meiliOnlyCount.get(),
             passthrough = passthroughCount.get(),
             postgresFallback = postgresFallbackCount.get(),
+            explore = exploreCount.get(),
             zeroResult = zeroResultCount.get(),
             avgLatencyMs = totalLatencyMs.get() / samples,
         )
@@ -54,6 +64,7 @@ class SearchMetricsRegistry {
         val meiliOnly: Long,
         val passthrough: Long,
         val postgresFallback: Long,
+        val explore: Long,
         val zeroResult: Long,
         val avgLatencyMs: Long,
     )

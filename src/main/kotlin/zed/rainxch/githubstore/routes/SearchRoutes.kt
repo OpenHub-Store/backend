@@ -149,7 +149,10 @@ fun Route.searchRoutes(
         val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 1).coerceIn(1, 10)
         val userToken = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
 
+        val startTime = System.currentTimeMillis()
         val result = githubSearch.explore(query, platform, page, userToken = userToken)
+        val elapsed = (System.currentTimeMillis() - startTime).toInt()
+        metrics.recordExplore(result.items.size, elapsed)
 
         // Explore is idempotent for (q, platform, page) so edge caching 60s saves
         // real GitHub API work on hot queries. Shorter browser cache (30s) since

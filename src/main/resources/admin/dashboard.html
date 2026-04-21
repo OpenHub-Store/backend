@@ -252,6 +252,7 @@
       document.getElementById("counters-block").innerHTML =
         stat("Meili only",      fmt(c.meiliOnly)) +
         stat("+ Passthrough",   fmt(c.passthrough)) +
+        stat("Explore (user)",  fmt(c.explore || 0)) +
         stat("Postgres fallback", fmt(c.postgresFallback),
              c.postgresFallback > 0 ? "status-warn" : "") +
         stat("Zero-result",     fmt(c.zeroResult)) +

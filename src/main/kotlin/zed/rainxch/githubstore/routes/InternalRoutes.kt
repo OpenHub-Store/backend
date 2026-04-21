@@ -49,6 +49,7 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
                     meiliOnly = snap.meiliOnly,
                     passthrough = snap.passthrough,
                     postgresFallback = snap.postgresFallback,
+                    explore = snap.explore,
                     zeroResult = snap.zeroResult,
                     avgLatencyMs = snap.avgLatencyMs,
                 )
@@ -234,6 +235,7 @@ data class SearchCounters(
     val meiliOnly: Long,
     val passthrough: Long,
     val postgresFallback: Long,
+    val explore: Long,
     val zeroResult: Long,
     val avgLatencyMs: Long,
 )
