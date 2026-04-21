@@ -12,7 +12,9 @@ import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
+import io.ktor.util.AttributeKey
 import io.sentry.Sentry
+import java.util.UUID
 import zed.rainxch.githubstore.routes.ADMIN_BASIC_AUTH
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
@@ -31,9 +33,22 @@ fun Application.configureSerialization() {
     }
 }
 
+private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
+
 fun Application.configureHTTP() {
     install(DefaultHeaders) {
         header("X-Engine", "github-store-backend")
+    }
+
+    // Mint a request ID early in the pipeline so every log line and error
+    // report can correlate. Respects a client-supplied X-Request-ID if
+    // present (useful when debugging a chain of services), otherwise
+    // generates a short random hex.
+    intercept(io.ktor.server.application.ApplicationCallPipeline.Plugins) {
+        val incoming = call.request.headers["X-Request-ID"]?.take(64)
+        val id = incoming ?: UUID.randomUUID().toString().substring(0, 12)
+        call.attributes.put(REQUEST_ID_KEY, id)
+        call.response.header("X-Request-ID", id)
     }
 
     // CORS is only useful for browser-based callers. The KMP client never sends
