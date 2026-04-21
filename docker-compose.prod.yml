@@ -55,6 +55,11 @@ services:
       # Quiet-window UTC hours. Change if the fetcher schedule moves.
       TOKEN_QUIET_START_UTC: "1"
       TOKEN_QUIET_END_UTC: "4"
+      # OAuth App client_id for the /v1/auth/device/* proxy. Same value the
+      # KMP client has in BuildKonfig — both paths of the primary→fallback
+      # flow must use the same OAuth App so device_codes are interchangeable.
+      # Required; the backend refuses to start without it.
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID}
     depends_on:
       postgres:
         condition: service_healthy
