@@ -20,7 +20,10 @@ fun main() {
     if (!sentryDsn.isNullOrBlank()) {
         Sentry.init { options ->
             options.dsn = sentryDsn
-            options.tracesSampleRate = 0.1
+            // 1% trace sampling — errors always captured (captureException is
+            // unaffected). At 90k users and no perf-debugging in flight, 10%
+            // burns Sentry quota without adding signal.
+            options.tracesSampleRate = 0.01
             options.environment = System.getenv("APP_ENV") ?: "production"
             options.release = "github-store-backend@${BuildInfo.version}"
         }
