@@ -37,6 +37,9 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
             if (!authorized(call, adminToken)) {
                 return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
             }
+            // An authenticated endpoint must never be edge-cached — or a pre-hardening
+            // response can linger at the CDN and be served to anyone for the cache TTL.
+            call.response.header(HttpHeaders.CacheControl, "no-store, private")
             val snap = metrics.snapshot()
             val counters = SearchCounters(
                 uptimeSeconds = snap.uptimeSeconds,
