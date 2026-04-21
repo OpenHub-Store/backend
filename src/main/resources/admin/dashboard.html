@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitHub Store — Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-row: #1c2229;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --err: #f85149;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+    }
+    header .meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin: 0;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card .body { padding: 14px 18px; }
+    .card.wide { grid-column: 1 / -1; }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 6px 0;
+    }
+    .stat .label { color: var(--text-muted); font-size: 13px; }
+    .stat .value {
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+    .status-ok    { color: var(--ok); }
+    .status-warn  { color: var(--warn); }
+    .status-err   { color: var(--err); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      background: var(--bg-row);
+    }
+    tr:last-child td { border-bottom: none; }
+    td.mono { font-family: var(--mono); font-size: 12px; }
+    td.num  { font-family: var(--mono); text-align: right; }
+    td.repo a { color: var(--accent); text-decoration: none; }
+    td.repo a:hover { text-decoration: underline; }
+    .empty {
+      padding: 24px 18px;
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+    }
+    .footer {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 16px 24px 40px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .footer code {
+      font-family: var(--mono);
+      background: var(--bg-card);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .refresh-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: var(--mono);
+    }
+    .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .error-banner {
+      background: #58131d;
+      color: #f85149;
+      padding: 12px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GitHub Store — Admin</h1>
+  <div>
+    <span class="meta" id="last-updated">loading…</span>
+    &nbsp;
+    <button class="refresh-btn" onclick="load()">refresh</button>
+  </div>
+</header>
+
+<div id="error" class="error-banner" style="display:none;"></div>
+
+<main id="dashboard" style="display:none;">
+
+  <section class="card">
+    <h2>System</h2>
+    <div class="body" id="system-block"></div>
+  </section>
+
+  <section class="card">
+    <h2>Search traffic (since restart)</h2>
+    <div class="body" id="counters-block"></div>
+  </section>
+
+  <section class="card">
+    <h2>Training signal</h2>
+    <div class="body" id="training-block"></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Top search misses (7d)</h2>
+    <div id="misses-block"></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Top repos by behavioral score</h2>
+    <div id="top-score-block"></div>
+  </section>
+
+  <section class="card">
+    <h2>Top clicked repos (30d)</h2>
+    <div id="top-clicks-block"></div>
+  </section>
+
+  <section class="card">
+    <h2>Top installed repos (30d)</h2>
+    <div id="top-installs-block"></div>
+  </section>
+
+</main>
+
+<div class="footer">
+  Source: <code>/v1/internal/metrics</code>. Auto-refreshes every 60s. Not publicly accessible.
+</div>
+
+<script>
+  function fmt(n) {
+    if (n === null || n === undefined) return "—";
+    if (typeof n === "number" && !Number.isInteger(n)) return n.toFixed(3);
+    return n.toLocaleString();
+  }
+  function fmtUptime(sec) {
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (d) return `${d}d ${h}h ${m}m`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m ${sec % 60}s`;
+  }
+  function stat(label, value, cls = "") {
+    return `<div class="stat"><span class="label">${label}</span><span class="value ${cls}">${value}</span></div>`;
+  }
+  function repoHref(fullName) {
+    return `https://github.com/${fullName}`;
+  }
+
+  async function load() {
+    const errBox = document.getElementById("error");
+    const dash = document.getElementById("dashboard");
+    errBox.style.display = "none";
+    try {
+      const [metricsRes, healthRes] = await Promise.all([
+        fetch("/v1/internal/metrics", { credentials: "include" }),
+        fetch("/v1/health"),
+      ]);
+      if (!metricsRes.ok) throw new Error(`metrics: HTTP ${metricsRes.status}`);
+      const m = await metricsRes.json();
+      const h = healthRes.ok ? await healthRes.json() : { status: "unreachable" };
+
+      // System
+      const pgClass = h.postgres === "ok" ? "status-ok" : "status-err";
+      const meiliClass = h.meilisearch === "ok" ? "status-ok" : "status-warn";
+      document.getElementById("system-block").innerHTML =
+        stat("Uptime", fmtUptime(m.counters.uptimeSeconds)) +
+        stat("Version", `<code>${h.version || "?"}</code>`) +
+        stat("Postgres", `<code>${h.postgres || "?"}</code>`, pgClass) +
+        stat("Meilisearch", `<code>${h.meilisearch || "?"}</code>`, meiliClass);
+
+      // Counters
+      const c = m.counters;
+      const total = c.meiliOnly + c.passthrough + c.postgresFallback;
+      const zeroRate = total > 0 ? (c.zeroResult / total * 100).toFixed(1) + "%" : "—";
+      document.getElementById("counters-block").innerHTML =
+        stat("Meili only",      fmt(c.meiliOnly)) +
+        stat("+ Passthrough",   fmt(c.passthrough)) +
+        stat("Postgres fallback", fmt(c.postgresFallback),
+             c.postgresFallback > 0 ? "status-warn" : "") +
+        stat("Zero-result",     fmt(c.zeroResult)) +
+        stat("Zero-result rate", zeroRate) +
+        stat("Avg latency",     `${fmt(c.avgLatencyMs)} ms`);
+
+      // Training
+      const t = m.training;
+      document.getElementById("training-block").innerHTML =
+        stat("Repos w/ score",    fmt(t.reposWithSearchScore)) +
+        stat("Repos w/ signals",  fmt(t.reposWithSignals)) +
+        stat("Unprocessed misses", fmt(t.unprocessedMisses),
+             t.unprocessedMisses > 50 ? "status-warn" : "");
+
+      // Top misses
+      document.getElementById("misses-block").innerHTML = tableOrEmpty(
+        t.topMissesLast7d,
+        ["Query", "Misses", "Results", "Last seen"],
+        r => `<tr>
+            <td class="mono">${escapeHtml(r.query || "")}</td>
+            <td class="num">${fmt(r.missCount)}</td>
+            <td class="num">${r.resultCount === null ? "—" : fmt(r.resultCount)}</td>
+            <td class="mono">${r.lastSeenAt ? r.lastSeenAt.replace("T", " ").slice(0, 19) : "—"}</td>
+          </tr>`
+      );
+
+      // Top repos
+      const topRepos = m.topRepos || {};
+      document.getElementById("top-score-block").innerHTML = tableOrEmpty(
+        topRepos.byScore,
+        ["Repo", "Score", "Stars"],
+        r => `<tr>
+            <td class="repo"><a href="${repoHref(r.fullName)}" target="_blank">${escapeHtml(r.fullName)}</a></td>
+            <td class="num">${(r.value || 0).toFixed(3)}</td>
+            <td class="num">${fmt(r.stars)}</td>
+          </tr>`
+      );
+      document.getElementById("top-clicks-block").innerHTML = tableOrEmpty(
+        topRepos.byClicks,
+        ["Repo", "Clicks"],
+        r => `<tr>
+            <td class="repo"><a href="${repoHref(r.fullName)}" target="_blank">${escapeHtml(r.fullName)}</a></td>
+            <td class="num">${fmt(r.value)}</td>
+          </tr>`
+      );
+      document.getElementById("top-installs-block").innerHTML = tableOrEmpty(
+        topRepos.byInstalls,
+        ["Repo", "Installs"],
+        r => `<tr>
+            <td class="repo"><a href="${repoHref(r.fullName)}" target="_blank">${escapeHtml(r.fullName)}</a></td>
+            <td class="num">${fmt(r.value)}</td>
+          </tr>`
+      );
+
+      document.getElementById("last-updated").textContent = "updated " + new Date().toISOString().slice(11, 19) + " UTC";
+      dash.style.display = "grid";
+    } catch (e) {
+      errBox.textContent = "Failed to load metrics: " + e.message;
+      errBox.style.display = "block";
+    }
+  }
+
+  function tableOrEmpty(rows, headers, rowFn) {
+    if (!rows || rows.length === 0) {
+      return `<div class="empty">no data yet</div>`;
+    }
+    return `<table>
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(rowFn).join("")}</tbody>
+    </table>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  load();
+  setInterval(load, 60_000);
+</script>
+
+</body>
+</html>

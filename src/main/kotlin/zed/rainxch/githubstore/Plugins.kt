@@ -3,6 +3,7 @@ package zed.rainxch.githubstore
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
+import io.ktor.server.auth.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.compression.*
 import io.ktor.server.plugins.contentnegotiation.*
@@ -12,6 +13,7 @@ import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.sentry.Sentry
+import zed.rainxch.githubstore.routes.ADMIN_BASIC_AUTH
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 import kotlin.time.Duration.Companion.hours
@@ -94,6 +96,22 @@ fun Application.configureHTTP() {
                 call.request.headers["CF-Connecting-IP"]
                     ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
+            }
+        }
+    }
+
+    // Basic Auth for the /v1/internal/dashboard HTML page. Username is
+    // ignored (anything goes); password must match ADMIN_TOKEN. Matches the
+    // token-gated JSON /v1/internal/metrics path so the browser gets a single
+    // credential to carry across both fetches.
+    val adminToken = System.getenv("ADMIN_TOKEN")?.takeIf { it.isNotBlank() }
+    install(Authentication) {
+        basic(ADMIN_BASIC_AUTH) {
+            realm = "github-store-admin"
+            validate { creds ->
+                if (adminToken != null && creds.password == adminToken) {
+                    UserIdPrincipal(creds.name)
+                } else null
             }
         }
     }
