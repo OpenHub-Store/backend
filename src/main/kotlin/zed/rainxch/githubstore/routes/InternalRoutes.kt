@@ -31,31 +31,35 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
     }
 
     route("/internal") {
-        // JSON metrics — gated by X-Admin-Token header (machine use) OR Basic
-        // Auth (browser / dashboard use). Dev-mode (adminToken null) stays open.
-        get("/metrics") {
-            if (!authorized(call, adminToken)) {
-                return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
+        // JSON metrics — accepts either Basic Auth (so the dashboard's fetch()
+        // carries the browser's cached credentials) OR an X-Admin-Token header
+        // (for curl / machine callers). optional=true makes the authenticate
+        // block parse credentials when present but not require them; the
+        // authorized() helper below is the actual gate.
+        authenticate(ADMIN_BASIC_AUTH, optional = true) {
+            get("/metrics") {
+                if (!authorized(call, adminToken)) {
+                    return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
+                }
+                // An authenticated endpoint must never be edge-cached.
+                call.response.header(HttpHeaders.CacheControl, "no-store, private")
+                val snap = metrics.snapshot()
+                val counters = SearchCounters(
+                    uptimeSeconds = snap.uptimeSeconds,
+                    meiliOnly = snap.meiliOnly,
+                    passthrough = snap.passthrough,
+                    postgresFallback = snap.postgresFallback,
+                    zeroResult = snap.zeroResult,
+                    avgLatencyMs = snap.avgLatencyMs,
+                )
+                val db = fetchDbMetrics()
+                val top = fetchTopRepos()
+                call.respond(MetricsResponse(counters = counters, training = db, topRepos = top))
             }
-            // An authenticated endpoint must never be edge-cached — or a pre-hardening
-            // response can linger at the CDN and be served to anyone for the cache TTL.
-            call.response.header(HttpHeaders.CacheControl, "no-store, private")
-            val snap = metrics.snapshot()
-            val counters = SearchCounters(
-                uptimeSeconds = snap.uptimeSeconds,
-                meiliOnly = snap.meiliOnly,
-                passthrough = snap.passthrough,
-                postgresFallback = snap.postgresFallback,
-                zeroResult = snap.zeroResult,
-                avgLatencyMs = snap.avgLatencyMs,
-            )
-            val db = fetchDbMetrics()
-            val top = fetchTopRepos()
-            call.respond(MetricsResponse(counters = counters, training = db, topRepos = top))
         }
 
-        // Browser dashboard. Basic Auth only (tokens in headers aren't
-        // UX-friendly from a browser).
+        // Browser dashboard. Basic Auth required in prod so the browser prompts
+        // for credentials on first visit; optional in dev for local inspection.
         authenticate(ADMIN_BASIC_AUTH, optional = adminToken == null) {
             get("/dashboard") {
                 val html = {}.javaClass.classLoader
