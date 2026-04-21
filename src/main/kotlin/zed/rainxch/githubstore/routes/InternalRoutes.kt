@@ -8,13 +8,22 @@ import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.transaction
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 
-/**
- * Operator-only visibility into the search + training pipeline. Gated by
- * `X-Admin-Token` matching the `ADMIN_TOKEN` env var. If the env var is unset
- * (local dev) the endpoint is open.
- */
 fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
     val adminToken: String? = System.getenv("ADMIN_TOKEN")?.takeIf { it.isNotBlank() }
+    val isProduction = System.getenv("APP_ENV") == "production"
+
+    // In production, refuse to serve internal routes at all if ADMIN_TOKEN is
+    // unset — "open by default when env var missing" is how /internal/metrics
+    // leaked competitive intel before this hardening. Dev keeps the open-door
+    // convenience so local inspection works without setting env.
+    if (isProduction && adminToken == null) {
+        route("/internal") {
+            get("{...}") {
+                call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
+            }
+        }
+        return
+    }
 
     route("/internal") {
         get("/metrics") {
