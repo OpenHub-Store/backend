@@ -36,9 +36,18 @@ fun Application.configureHTTP() {
         header("X-Engine", "github-store-backend")
     }
 
+    // CORS is only useful for browser-based callers. The KMP client never sends
+    // Origin (native HttpClient), so this only affects the admin dashboard (same
+    // origin as the API — doesn't need CORS) and any future web surface. Pinning
+    // to our own domains removes a CSRF foothold on /v1/events from malicious
+    // third-party pages without breaking anything we actually serve.
     install(CORS) {
-        anyHost()
+        allowHost("github-store.org", subDomains = listOf("api", "api-direct", "www"))
+        allowHost("localhost:8080")
+        allowHost("localhost:5173") // vite dev default, harmless if unused
         allowHeader(HttpHeaders.ContentType)
+        allowHeader("X-GitHub-Token")
+        allowHeader("X-Admin-Token")
         allowMethod(HttpMethod.Get)
         allowMethod(HttpMethod.Post)
     }
