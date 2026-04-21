@@ -168,8 +168,8 @@ class GitHubSearchClient(
 
             // Persist asynchronously — the response doesn't wait for Postgres/Meili.
             persistenceScope.launch {
-                ingestToPostgres(withInstallers)
-                syncToMeilisearch(withInstallers)
+                val scoredByRepoId = ingestToPostgres(withInstallers)
+                syncToMeilisearch(withInstallers, scoredByRepoId)
                 log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
             }
 
@@ -219,8 +219,8 @@ class GitHubSearchClient(
 
             if (withInstallers.isNotEmpty()) {
                 persistenceScope.launch {
-                    ingestToPostgres(withInstallers)
-                    syncToMeilisearch(withInstallers)
+                    val scoredByRepoId = ingestToPostgres(withInstallers)
+                    syncToMeilisearch(withInstallers, scoredByRepoId)
                     log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
                 }
             }
@@ -366,9 +366,9 @@ class GitHubSearchClient(
     // Writes a single RepoWithRelease to Postgres + schedules Meili sync.
     // Exposed for RepoRefreshWorker so it doesn't duplicate upsert plumbing.
     internal fun persist(refreshed: RepoWithRelease) {
-        ingestToPostgres(listOf(refreshed))
+        val scored = ingestToPostgres(listOf(refreshed))
         persistenceScope.launch {
-            syncToMeilisearch(listOf(refreshed))
+            syncToMeilisearch(listOf(refreshed), scored)
         }
     }
 
@@ -390,7 +390,11 @@ class GitHubSearchClient(
         )
     }
 
-    private fun ingestToPostgres(repos: List<RepoWithRelease>) {
+    // Returns a map of repo_id → search_score for the repos just upserted,
+    // so syncToMeilisearch can include the score on its POST payload
+    // (without it, Meili's full-doc replace wipes the worker's score).
+    private fun ingestToPostgres(repos: List<RepoWithRelease>): Map<Long, Double> {
+        val scoredByRepoId = mutableMapOf<Long, Double>()
         transaction {
             for (r in repos) {
                 val repo = r.repo
@@ -438,11 +442,16 @@ class GitHubSearchClient(
                     it[searchScore] = scoreToWrite
                     it[indexedAt] = OffsetDateTime.now()
                 }
+                scoredByRepoId[repo.id] = scoreToWrite.toDouble()
             }
         }
+        return scoredByRepoId
     }
 
-    private suspend fun syncToMeilisearch(repos: List<RepoWithRelease>) {
+    private suspend fun syncToMeilisearch(
+        repos: List<RepoWithRelease>,
+        scoredByRepoId: Map<Long, Double>,
+    ) {
         try {
             val docs = repos.map { r ->
                 zed.rainxch.githubstore.db.MeiliRepoHit(
@@ -465,6 +474,10 @@ class GitHubSearchClient(
                     has_installers_windows = r.platformFlags["windows"] ?: false,
                     has_installers_macos = r.platformFlags["macos"] ?: false,
                     has_installers_linux = r.platformFlags["linux"] ?: false,
+                    // Meili's POST /documents replaces the whole doc. Omitting this
+                    // would wipe the SignalAggregationWorker's most recent score
+                    // on every passthrough/refresh until the next hourly cycle.
+                    search_score = scoredByRepoId[r.repo.id],
                 )
             }
             meilisearchClient.addDocuments(docs)
