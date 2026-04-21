@@ -13,4 +13,10 @@ COPY --from=build /app/build/libs/github-store-backend.jar app.jar
 RUN chown -R appuser:appuser /app
 USER appuser
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# 50% of the container's allocated RAM. Container is co-scheduled with
+# Postgres and Meilisearch on one 8GB VPS; without an explicit ceiling the
+# JVM reads host RAM and sets -Xmx to ~2GB, which starves the other two
+# services if traffic bursts. -XX:+ExitOnOutOfMemoryError makes OOMs
+# crash the container so docker-compose restarts it instead of leaving a
+# zombie.
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=50", "-XX:+ExitOnOutOfMemoryError", "-jar", "app.jar"]

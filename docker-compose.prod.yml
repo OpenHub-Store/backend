@@ -34,6 +34,9 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # 2 GB ceiling. Combined with Postgres + Meilisearch, fits well under the
+    # VPS's 8 GB. -XX:MaxRAMPercentage=50 in the Dockerfile reads this.
+    mem_limit: 2g
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/githubstore
       DATABASE_USER: githubstore
