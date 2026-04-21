@@ -16,6 +16,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -110,6 +112,12 @@ class GitHubSearchClient(
         }
     )
 
+    // Bounds how many passthrough/refresh upserts can be in flight at once.
+    // Without this, a traffic burst queues unbounded coroutines each holding
+    // a Hikari connection (pool size 9) — pool exhaustion starves request
+    // handlers. 4 keeps plenty of pool capacity for live requests.
+    private val persistenceGate = Semaphore(permits = 4)
+
     private val installerExtensions = listOf(
         ".apk", ".aab",                          // Android
         ".exe", ".msi", ".msix",                  // Windows
@@ -168,9 +176,11 @@ class GitHubSearchClient(
 
             // Persist asynchronously — the response doesn't wait for Postgres/Meili.
             persistenceScope.launch {
-                val scoredByRepoId = ingestToPostgres(withInstallers)
-                syncToMeilisearch(withInstallers, scoredByRepoId)
-                log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
+                persistenceGate.withPermit {
+                    val scoredByRepoId = ingestToPostgres(withInstallers)
+                    syncToMeilisearch(withInstallers, scoredByRepoId)
+                    log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
+                }
             }
 
             return withInstallers.map { it.toRepoResponse() }
@@ -219,9 +229,11 @@ class GitHubSearchClient(
 
             if (withInstallers.isNotEmpty()) {
                 persistenceScope.launch {
-                    val scoredByRepoId = ingestToPostgres(withInstallers)
-                    syncToMeilisearch(withInstallers, scoredByRepoId)
-                    log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+                    persistenceGate.withPermit {
+                        val scoredByRepoId = ingestToPostgres(withInstallers)
+                        syncToMeilisearch(withInstallers, scoredByRepoId)
+                        log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+                    }
                 }
             }
 
@@ -368,7 +380,9 @@ class GitHubSearchClient(
     internal fun persist(refreshed: RepoWithRelease) {
         val scored = ingestToPostgres(listOf(refreshed))
         persistenceScope.launch {
-            syncToMeilisearch(listOf(refreshed), scored)
+            persistenceGate.withPermit {
+                syncToMeilisearch(listOf(refreshed), scored)
+            }
         }
     }
 
