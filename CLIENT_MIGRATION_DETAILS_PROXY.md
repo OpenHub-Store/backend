@@ -89,9 +89,15 @@ override suspend fun getAllReleases(owner: String, name: String): Result<List<Gi
 
 Same fallback rule as the auth migration: **only fall back on 5xx / network errors.** A 404 from the backend means GitHub also returned 404 (cached by the backend as a negative hit) — direct-to-GitHub would give the same 404 back.
 
-### 3. Nothing else changes on the client for Phase 5.1
+### 3. README and user endpoints (Phase 5.2 + 5.3 — also live)
 
-`/v1/readme/*` and `/v1/user/*` are coming in Phase 5.2 and 5.3. The corresponding client methods stay on their current direct-to-GitHub path for now.
+**`GET /v1/readme/{owner}/{name}`** — forwards `https://api.github.com/repos/{owner}/{name}/readme` verbatim. GitHub's JSON shape (base64-encoded content + metadata fields). 24h cache, 6h edge. Client's existing base64-decode path works unchanged — just swap the URL.
+
+**`GET /v1/user/{username}`** — forwards `https://api.github.com/users/{username}` verbatim. 7-day cache with aggressive edge caching (`s-maxage=604800`), so popular maintainers' profiles are served from Gcore for nearly every hit. Client's existing profile-parsing path works unchanged.
+
+Both endpoints carry the same `X-GitHub-Token` forwarding, same 502-fallback semantics, same `X-Cache-State: stale-fallback` header when serving stale on upstream outage.
+
+Client work per endpoint: swap the URL, mirror the `getAllReleases` backend-first-then-GitHub-fallback wrapper. Same infrastructure-error-only fallback rule as everywhere else.
 
 ## Rate limits
 
@@ -152,7 +158,6 @@ curl -s "https://api-direct.github-store.org/v1/repo/nonexistent-owner-xyz/fake-
 
 ## Out of scope
 
-- `/v1/readme/*` (Phase 5.2)
-- `/v1/user/*` (Phase 5.3)
 - `/v1/repo/by-id/{id}` (not planned — confirmed unused by client)
 - Client-side ETag revalidation (future enhancement; client cache doesn't yet plumb ETags)
+- Pre-warming popular repos' caches during the fetcher's quiet window (follow-up — worker extension)
