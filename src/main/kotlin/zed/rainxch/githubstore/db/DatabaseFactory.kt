@@ -60,6 +60,7 @@ object DatabaseFactory {
                 "V2__add_download_count.sql",
                 "V3__search_miss_processing.sql",
                 "V4__signals_and_search_score.sql",
+                "V5__resource_cache.sql",
             )
             for (migration in migrations) {
                 val sql = this::class.java.classLoader
