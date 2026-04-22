@@ -11,6 +11,7 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.util.AttributeKey
 import io.sentry.Sentry
@@ -142,14 +143,38 @@ fun Application.configureHTTP() {
 
     install(CallLogging) {
         level = Level.INFO
-        // Don't log query parameters to avoid leaking search terms
         disableDefaultColors()
+        // Populate SLF4J MDC with the request ID so any structured log
+        // consumer (Sentry breadcrumbs, JSON log aggregators) picks it up
+        // automatically via the MDC key "rid". Ktor's CallLogging plugin
+        // manages MDC lifecycle around the call.
+        mdc("rid") { call -> call.attributes.getOrNull(REQUEST_ID_KEY) }
+        // Explicit bracket-prefixed access-log line so `grep 'rid=7404b7e8'`
+        // on raw log files works without a structured-log pipeline. The
+        // default Ktor format is sparse and doesn't carry the request ID
+        // into the message body.
+        format { call ->
+            val rid = call.attributes.getOrNull(REQUEST_ID_KEY) ?: "-"
+            val status = call.response.status()?.value ?: "-"
+            val method = call.request.httpMethod.value
+            val path = call.request.path()
+            "[rid=$rid] $status $method $path"
+        }
     }
 
     install(StatusPages) {
         exception<Throwable> { call, cause ->
-            call.application.environment.log.error("Unhandled exception", cause)
-            Sentry.captureException(cause)
+            val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
+            call.application.environment.log.error(
+                "Unhandled exception (rid=${rid ?: "-"})",
+                cause,
+            )
+            // Tag Sentry events with the same request_id users paste into bug
+            // reports — makes the Sentry UI filter one-click.
+            Sentry.withScope { scope ->
+                if (rid != null) scope.setTag("request_id", rid)
+                Sentry.captureException(cause)
+            }
             call.respond(
                 HttpStatusCode.InternalServerError,
                 mapOf("error" to "Internal server error")
