@@ -37,6 +37,8 @@ fun Application.configureRouting() {
             rateLimit(RateLimitName("search")) {
                 searchRoutes(meilisearchClient, searchRepository, githubSearchClient, searchMissRepository, searchMetrics)
                 releasesRoutes(resourceClient)
+                readmeRoutes(resourceClient)
+                userRoutes(resourceClient)
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics)
