@@ -10,6 +10,7 @@ import zed.rainxch.githubstore.db.RepoRepository
 import zed.rainxch.githubstore.db.SearchMissRepository
 import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubDeviceClient
+import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 
@@ -21,6 +22,7 @@ fun Application.configureRouting() {
     val meilisearchClient by inject<MeilisearchClient>()
     val githubSearchClient by inject<GitHubSearchClient>()
     val deviceClient by inject<GitHubDeviceClient>()
+    val resourceClient by inject<GitHubResourceClient>()
     val searchMetrics by inject<SearchMetricsRegistry>()
 
     routing {
@@ -31,9 +33,10 @@ fun Application.configureRouting() {
             }
             categoryRoutes(repoRepository)
             topicRoutes(repoRepository)
-            repoRoutes(repoRepository)
+            repoRoutes(repoRepository, resourceClient)
             rateLimit(RateLimitName("search")) {
                 searchRoutes(meilisearchClient, searchRepository, githubSearchClient, searchMissRepository, searchMetrics)
+                releasesRoutes(resourceClient)
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics)
