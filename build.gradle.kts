@@ -32,6 +32,7 @@ dependencies {
     implementation("io.ktor:ktor-server-compression:$ktorVersion")
     implementation("io.ktor:ktor-server-rate-limit:$ktorVersion")
     implementation("io.ktor:ktor-server-auth:$ktorVersion")
+    implementation("io.ktor:ktor-server-auto-head-response:$ktorVersion")
 
     // Ktor client (for Meilisearch)
     implementation("io.ktor:ktor-client-core:$ktorVersion")

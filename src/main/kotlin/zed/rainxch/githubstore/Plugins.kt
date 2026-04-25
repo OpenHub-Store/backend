@@ -8,6 +8,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.compression.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.autohead.*
 import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
@@ -73,6 +74,11 @@ fun Application.configureHTTP() {
             priority = 1.0
         }
     }
+
+    // Route HEAD requests to the matching GET handler. Without this, HEAD
+    // returns 404 even when GET works — confusing for `curl -I`, monitoring,
+    // and CDN origin probes.
+    install(AutoHeadResponse)
 
     install(RateLimit) {
         // General API: 120 requests per minute per IP
