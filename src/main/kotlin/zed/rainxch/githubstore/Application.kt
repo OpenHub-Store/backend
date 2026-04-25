@@ -20,12 +20,23 @@ fun main() {
     if (!sentryDsn.isNullOrBlank()) {
         Sentry.init { options ->
             options.dsn = sentryDsn
-            // 1% trace sampling — errors always captured (captureException is
-            // unaffected). At 90k users and no perf-debugging in flight, 10%
-            // burns Sentry quota without adding signal.
             options.tracesSampleRate = 0.01
             options.environment = System.getenv("APP_ENV") ?: "production"
             options.release = "github-store-backend@${BuildInfo.version}"
+            // Scrub credential-bearing headers from every event before they
+            // leave the process. Sentry's default scrubber catches a few
+            // common ones; this list is what we explicitly forward and what
+            // an attacker could set to test the pipeline.
+            options.setBeforeSend { event, _ ->
+                event.request?.headers?.let { headers ->
+                    listOf(
+                        "Authorization", "X-GitHub-Token", "X-Admin-Token",
+                        "Cookie", "Set-Cookie", "X-Forwarded-For",
+                        "CF-Connecting-IP",
+                    ).forEach { headers.remove(it) }
+                }
+                event
+            }
         }
     }
 
@@ -72,6 +83,10 @@ private fun validateProductionEnv() {
         "MEILI_URL",
         "MEILI_MASTER_KEY",
         "GITHUB_OAUTH_CLIENT_ID",
+        // Pepper for SHA-256 hashing of device IDs before they hit Postgres.
+        // Required in prod so a stolen DB dump can't be brute-forced into a
+        // device-ID lookup table without also stealing the env.
+        "DEVICE_ID_PEPPER",
     )
     val missing = required.filter { System.getenv(it).isNullOrBlank() }
     if (missing.isNotEmpty()) {
