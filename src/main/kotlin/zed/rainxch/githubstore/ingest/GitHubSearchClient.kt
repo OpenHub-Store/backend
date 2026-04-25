@@ -117,9 +117,17 @@ class GitHubSearchClient(
 
     // Bounds how many passthrough/refresh upserts can be in flight at once.
     // Without this, a traffic burst queues unbounded coroutines each holding
-    // a Hikari connection (pool size 9) — pool exhaustion starves request
+    // a Hikari connection (pool size 20) — pool exhaustion starves request
     // handlers. 4 keeps plenty of pool capacity for live requests.
     private val persistenceGate = Semaphore(permits = 4)
+
+    // Caps concurrent cold-search upstream work. searchAndIngest and explore
+    // each fan out to GitHub (search + per-candidate release fetch); under a
+    // burst of distinct cold queries this can saturate the rotation pool and
+    // backlog Ktor request workers waiting on upstream. 8 in-flight searches
+    // is comfortable for the 4-token rotation pool and leaves the remaining
+    // pool capacity for warm Meili-served traffic.
+    private val coldQueryGate = Semaphore(permits = 8)
 
     private val platformExtensions = mapOf(
         "android" to listOf(".apk", ".aab"),
@@ -170,6 +178,7 @@ class GitHubSearchClient(
                 return emptyList()
             }
 
+            return coldQueryGate.withPermit {
             val token = userToken ?: pickFallbackToken()
             var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
             // When the stars-sorted pass yields nothing installable, try an
@@ -179,7 +188,7 @@ class GitHubSearchClient(
             if (withInstallers.isEmpty()) {
                 withInstallers = runPass(query, platform, limit, token, nameMatch = true)
             }
-            if (withInstallers.isEmpty()) return emptyList()
+            if (withInstallers.isEmpty()) return@withPermit emptyList()
 
             // Persist asynchronously — the response doesn't wait for Postgres/Meili.
             persistenceScope.launch {
@@ -190,7 +199,8 @@ class GitHubSearchClient(
                 }
             }
 
-            return withInstallers.map { it.toRepoResponse() }
+            withInstallers.map { it.toRepoResponse() }
+            }
         } catch (e: Exception) {
             log.warn("GitHub search passthrough failed for query={}: {}", queryHash(query), e.message)
             return emptyList()
@@ -214,48 +224,50 @@ class GitHubSearchClient(
                 return ExploreResult(emptyList(), hasMore = false)
             }
 
-            val token = userToken ?: pickFallbackToken()
-            // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
-            val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, token = token)
-            if (repos.isEmpty()) return ExploreResult(emptyList(), hasMore = false)
+            return coldQueryGate.withPermit {
+                val token = userToken ?: pickFallbackToken()
+                // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
+                val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, token = token)
+                if (repos.isEmpty()) return@withPermit ExploreResult(emptyList(), hasMore = false)
 
-            val filtered = repos.filter { repo ->
-                !repo.archived && !repo.disabled && !repoIsBlocked(repo)
-            }
+                val filtered = repos.filter { repo ->
+                    !repo.archived && !repo.disabled && !repoIsBlocked(repo)
+                }
 
-            val withInstallers = coroutineScope {
-                filtered.map { repo ->
-                    async {
-                        val releases = fetchAllReleases(repo.fullName, token)
-                        val latest = releases.firstOrNull { !it.draft && !it.prerelease }
-                            ?: return@async null
-                        val platformFlags = detectPlatforms(latest)
-                        if (platformFlags.none { it.value }) return@async null
-                        if (platform != null && platformFlags[platform] != true) return@async null
-                        val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
-                        RepoWithRelease(repo, latest, platformFlags, downloadCount)
-                    }
-                }.awaitAll()
-            }.filterNotNull()
+                val withInstallers = coroutineScope {
+                    filtered.map { repo ->
+                        async {
+                            val releases = fetchAllReleases(repo.fullName, token)
+                            val latest = releases.firstOrNull { !it.draft && !it.prerelease }
+                                ?: return@async null
+                            val platformFlags = detectPlatforms(latest)
+                            if (platformFlags.none { it.value }) return@async null
+                            if (platform != null && platformFlags[platform] != true) return@async null
+                            val downloadCount = releases.sumOf { r -> r.assets.sumOf { it.downloadCount } }
+                            RepoWithRelease(repo, latest, platformFlags, downloadCount)
+                        }
+                    }.awaitAll()
+                }.filterNotNull()
 
-            if (withInstallers.isNotEmpty()) {
-                persistenceScope.launch {
-                    persistenceGate.withPermit {
-                        val scoredByRepoId = ingestToPostgres(withInstallers)
-                        syncToMeilisearch(withInstallers, scoredByRepoId)
-                        log.info("Explore ingest: {} repos for query={} page={}", withInstallers.size, queryHash(query), page)
+                if (withInstallers.isNotEmpty()) {
+                    persistenceScope.launch {
+                        persistenceGate.withPermit {
+                            val scoredByRepoId = ingestToPostgres(withInstallers)
+                            syncToMeilisearch(withInstallers, scoredByRepoId)
+                            log.info("Explore ingest: {} repos for query={} page={}", withInstallers.size, queryHash(query), page)
+                        }
                     }
                 }
-            }
 
-            // hasMore signals "worth asking for another page". A full raw page
-            // that filtered down to zero installables almost always means
-            // subsequent pages (same sort order, similar repos) will too — so
-            // flip hasMore false when the installable yield is empty. Prevents
-            // the client from looping forever on queries like "insta" where
-            // everything matches text but nothing ships with installers.
-            val hasMore = repos.size >= 10 && withInstallers.isNotEmpty()
-            return ExploreResult(withInstallers.map { it.toRepoResponse() }, hasMore = hasMore)
+                // hasMore signals "worth asking for another page". A full raw page
+                // that filtered down to zero installables almost always means
+                // subsequent pages (same sort order, similar repos) will too — so
+                // flip hasMore false when the installable yield is empty. Prevents
+                // the client from looping forever on queries like "insta" where
+                // everything matches text but nothing ships with installers.
+                val hasMore = repos.size >= 10 && withInstallers.isNotEmpty()
+                ExploreResult(withInstallers.map { it.toRepoResponse() }, hasMore = hasMore)
+            }
         } catch (e: Exception) {
             log.warn("Explore failed for query={} page {}: {}", queryHash(query), page, e.message)
             return ExploreResult(emptyList(), hasMore = false)

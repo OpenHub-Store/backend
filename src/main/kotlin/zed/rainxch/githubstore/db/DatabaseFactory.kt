@@ -24,7 +24,7 @@ object DatabaseFactory {
             jdbcUrl = env("DATABASE_URL", "jdbc:postgresql://localhost:5432/githubstore")
             username = env("DATABASE_USER", "githubstore")
             password = env("DATABASE_PASSWORD", "githubstore")
-            maximumPoolSize = env("DATABASE_POOL_SIZE", "9").toInt()
+            maximumPoolSize = env("DATABASE_POOL_SIZE", "20").toInt()
             isAutoCommit = false
             connectionTimeout = 5_000
             validationTimeout = 3_000
