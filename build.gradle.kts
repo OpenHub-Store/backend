@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "2.1.20"
     kotlin("plugin.serialization") version "2.1.20"
     id("io.ktor.plugin") version "3.1.2"
+    id("com.github.jk1.dependency-license-report") version "2.9"
 }
 
 group = "zed.rainxch.githubstore"
@@ -72,6 +73,16 @@ ktor {
     fatJar {
         archiveFileName.set("github-store-backend.jar")
     }
+}
+
+// Generate THIRD-PARTY-LICENSES.md from the resolved dependency graph. Run
+// `./gradlew generateLicenseReport` and copy the Markdown report onto the
+// committed file; the manual file remains the source of truth for legal review.
+licenseReport {
+    outputDir = layout.buildDirectory.dir("license-reports").get().asFile.absolutePath
+    renderers = arrayOf(
+        com.github.jk1.license.render.InventoryMarkdownReportRenderer("THIRD-PARTY-LICENSES-generated.md", "github-store-backend"),
+    )
 }
 
 // Write the project version to a resource file so the app can surface it at
