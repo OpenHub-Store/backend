@@ -13,6 +13,7 @@ import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
+import zed.rainxch.githubstore.badge.BadgeService
 
 fun Application.configureRouting() {
     val eventRepository by inject<EventRepository>()
@@ -24,6 +25,7 @@ fun Application.configureRouting() {
     val deviceClient by inject<GitHubDeviceClient>()
     val resourceClient by inject<GitHubResourceClient>()
     val searchMetrics by inject<SearchMetricsRegistry>()
+    val badgeService by inject<BadgeService>()
 
     routing {
         route("/v1") {
@@ -42,6 +44,7 @@ fun Application.configureRouting() {
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics)
+            badgeRoutes(badgeService)
         }
     }
 }
