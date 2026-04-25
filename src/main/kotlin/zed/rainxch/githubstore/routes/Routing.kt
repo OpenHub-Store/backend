@@ -44,7 +44,9 @@ fun Application.configureRouting() {
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics)
-            badgeRoutes(badgeService)
+            rateLimit(RateLimitName("badges")) {
+                badgeRoutes(badgeService)
+            }
         }
     }
 }

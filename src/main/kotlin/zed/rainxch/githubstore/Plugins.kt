@@ -60,11 +60,20 @@ fun Application.configureHTTP() {
     // third-party pages without breaking anything we actually serve.
     install(CORS) {
         allowHost("github-store.org", subDomains = listOf("api", "api-direct", "www"))
-        allowHost("localhost:8080")
-        allowHost("localhost:5173") // vite dev default, harmless if unused
+        // localhost dev origins are only useful when developing the admin
+        // dashboard or a future web client locally. Gating them on APP_ENV
+        // keeps them out of the production allowlist so a malicious page
+        // can't pretend to be localhost via header forgery against prod.
+        if (System.getenv("APP_ENV") != "production") {
+            allowHost("localhost:8080")
+            allowHost("localhost:5173") // vite dev default, harmless if unused
+        }
         allowHeader(HttpHeaders.ContentType)
         allowHeader("X-GitHub-Token")
-        allowHeader("X-Admin-Token")
+        // X-Admin-Token is intentionally NOT in the CORS allowlist. Admin
+        // endpoints are reached via curl/SSH only — never from a browser —
+        // so allowing the header would only enable a CSRF-adjacent abuse
+        // path (e.g. tricking an admin's browser into firing requests).
         allowMethod(HttpMethod.Get)
         allowMethod(HttpMethod.Post)
     }
@@ -81,12 +90,19 @@ fun Application.configureHTTP() {
     install(AutoHeadResponse)
 
     install(RateLimit) {
-        // General API: 120 requests per minute per IP
+        // General API: 120 requests per minute per IP.
+        //
+        // Note on the key: we only consult X-Forwarded-For (set by Caddy to
+        // the real TCP source) with a socket-IP fallback. The CF-Connecting-IP
+        // branch was removed when we moved off Cloudflare onto Gcore — Gcore
+        // doesn't set that header, so leaving it in only created a forgery
+        // path: any client could send `CF-Connecting-IP: <random>` and rotate
+        // past the limiter at will. Same reasoning applies to every bucket
+        // below.
         global {
             rateLimiter(limit = 120, refillPeriod = 1.minutes)
             requestKey { call ->
-                call.request.headers["CF-Connecting-IP"]
-                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
             }
         }
@@ -94,8 +110,7 @@ fun Application.configureHTTP() {
         register(RateLimitName("events")) {
             rateLimiter(limit = 30, refillPeriod = 1.minutes)
             requestKey { call ->
-                call.request.headers["CF-Connecting-IP"]
-                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
             }
         }
@@ -103,9 +118,16 @@ fun Application.configureHTTP() {
         register(RateLimitName("search")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
             requestKey { call ->
-                call.request.headers["CF-Connecting-IP"]
-                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
+            }
+        }
+        // Badges: 60/min/IP. Embedded in READMEs so a single popular repo can
+        // generate steady traffic; the limit is per-viewer-IP, not per-repo.
+        register(RateLimitName("badges")) {
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
             }
         }
         // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
@@ -114,8 +136,7 @@ fun Application.configureHTTP() {
         register(RateLimitName("auth-start")) {
             rateLimiter(limit = 10, refillPeriod = 1.hours)
             requestKey { call ->
-                call.request.headers["CF-Connecting-IP"]
-                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
             }
         }
@@ -124,8 +145,7 @@ fun Application.configureHTTP() {
         register(RateLimitName("auth-poll")) {
             rateLimiter(limit = 200, refillPeriod = 1.hours)
             requestKey { call ->
-                call.request.headers["CF-Connecting-IP"]
-                    ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                     ?: "unknown"
             }
         }
