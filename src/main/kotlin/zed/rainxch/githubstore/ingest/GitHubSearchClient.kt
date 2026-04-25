@@ -270,9 +270,13 @@ class GitHubSearchClient(
         nameMatch: Boolean,
     ): List<RepoWithRelease> {
         if (FeatureFlags.disableLiveGitHubPassthrough) return emptyList()
+        // Fan-out cap: 10 candidates × up to 3 release pages = ~30 GitHub
+        // calls per pass, vs ~1500 with the old 30 / 50 settings. Tighter
+        // ceiling makes a flood of cold queries far less able to drain
+        // the rotation pool.
         val repos = searchGitHub(
             query = query,
-            limit = 30,
+            limit = 10,
             page = 1,
             minStars = if (nameMatch) 5 else 10,
             token = token,
@@ -330,15 +334,15 @@ class GitHubSearchClient(
         return response.body<GitHubSearchResponse>().items
     }
 
-    // Fetches all releases by following the Link: next header. Used to
-    // aggregate download_count across every asset of every release — matches
-    // what shields.io shows. Bounded at 50 pages (5000 releases) so a
-    // pathological repo can't hang us.
+    // Fetches recent releases by following the Link: next header. Bounded at
+    // 3 pages (300 releases) — the long tail of older download counts past
+    // that is rounding noise for ranking, and the cap keeps a single cold
+    // query from dispatching ~50 GitHub API calls per candidate.
     private suspend fun fetchAllReleases(fullName: String, token: String? = pickFallbackToken()): List<GitHubRelease> {
         val out = mutableListOf<GitHubRelease>()
         var url: String? = "https://api.github.com/repos/$fullName/releases?per_page=100"
         var pages = 0
-        while (url != null && pages < 50) {
+        while (url != null && pages < 3) {
             try {
                 val response = client.get(url) {
                     header("Accept", "application/vnd.github+json")
