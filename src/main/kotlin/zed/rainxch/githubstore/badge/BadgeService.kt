@@ -108,23 +108,23 @@ class BadgeService(
     }
 
     private fun repoStars(owner: String, name: String): Pair<Long, Boolean> {
-        val fromDb = try {
-            repoRepository.findByOwnerAndName(owner, name)?.stargazersCount?.toLong()
+        return try {
+            val repo = repoRepository.findByOwnerAndName(owner, name)
+            if (repo == null) 0L to true else repo.stargazersCount.toLong() to false
         } catch (e: Exception) {
-            log.warn("DB stars lookup failed: {}", e.message); null
+            log.warn("DB stars lookup failed: {}", e.message)
+            0L to true
         }
-        if (fromDb != null && fromDb > 0) return fromDb to false
-        return 0L to true
     }
 
     private fun repoDownloadCount(owner: String, name: String): Pair<Long, Boolean> {
-        val fromDb = try {
-            repoRepository.findByOwnerAndName(owner, name)?.downloadCount
+        return try {
+            val repo = repoRepository.findByOwnerAndName(owner, name)
+            if (repo == null) 0L to true else repo.downloadCount to false
         } catch (e: Exception) {
-            log.warn("DB downloads lookup failed: {}", e.message); null
+            log.warn("DB downloads lookup failed: {}", e.message)
+            0L to true
         }
-        if (fromDb != null && fromDb > 0) return fromDb to false
-        return 0L to true
     }
 
     private suspend fun repoLatestReleaseTag(owner: String, name: String): Pair<String, Boolean> {
