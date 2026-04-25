@@ -10,6 +10,7 @@ import zed.rainxch.githubstore.ingest.GitHubRepo
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
+import zed.rainxch.githubstore.util.GitHubIdentifiers
 
 private val log = LoggerFactory.getLogger("RepoRoutes")
 
@@ -24,12 +25,10 @@ fun Route.repoRoutes(
     val lenientJson = Json { ignoreUnknownKeys = true }
 
     get("/repo/{owner}/{name}") {
-        val owner = call.parameters["owner"] ?: return@get call.respond(
-            HttpStatusCode.BadRequest, mapOf("error" to "Missing owner")
-        )
-        val name = call.parameters["name"] ?: return@get call.respond(
-            HttpStatusCode.BadRequest, mapOf("error" to "Missing name")
-        )
+        val owner = GitHubIdentifiers.validOwner(call.parameters["owner"])
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_owner"))
+        val name = GitHubIdentifiers.validName(call.parameters["name"])
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_name"))
 
         // Fast path: curated DB hit — full RepoResponse with installer flags,
         // search_score, etc.

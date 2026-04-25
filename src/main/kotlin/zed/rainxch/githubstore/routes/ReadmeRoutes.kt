@@ -5,13 +5,14 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
+import zed.rainxch.githubstore.util.GitHubIdentifiers
 
 fun Route.readmeRoutes(resourceClient: GitHubResourceClient) {
     get("/readme/{owner}/{name}") {
-        val owner = call.parameters["owner"]
-            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing owner"))
-        val name = call.parameters["name"]
-            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing name"))
+        val owner = GitHubIdentifiers.validOwner(call.parameters["owner"])
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_owner"))
+        val name = GitHubIdentifiers.validName(call.parameters["name"])
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_name"))
 
         val userToken = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
 

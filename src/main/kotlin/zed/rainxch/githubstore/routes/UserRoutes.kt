@@ -5,11 +5,12 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
+import zed.rainxch.githubstore.util.GitHubIdentifiers
 
 fun Route.userRoutes(resourceClient: GitHubResourceClient) {
     get("/user/{username}") {
-        val username = call.parameters["username"]
-            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing username"))
+        val username = GitHubIdentifiers.validOwner(call.parameters["username"])
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_owner"))
 
         val userToken = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
 

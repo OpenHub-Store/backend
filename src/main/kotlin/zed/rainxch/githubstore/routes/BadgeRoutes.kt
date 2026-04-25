@@ -6,6 +6,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.badge.BadgeVariant
+import zed.rainxch.githubstore.util.GitHubIdentifiers
 
 private val SVG_CONTENT_TYPE = ContentType.parse("image/svg+xml; charset=utf-8")
 private const val FRESH_CACHE = "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400"
@@ -32,6 +33,7 @@ fun Route.badgeRoutes(badgeService: BadgeService) {
 
             val label = call.request.queryParameters["label"]?.takeIf { it.isNotBlank() }
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "label query parameter required"))
+            if (label.length > 100) return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "label_too_long"))
             val icon = call.request.queryParameters["icon"]
             val height = parseHeight(call.request.queryParameters["height"])
 
@@ -41,10 +43,10 @@ fun Route.badgeRoutes(badgeService: BadgeService) {
 
         // Per-repo: /v1/badge/{owner}/{name}/{kind}/{style}/{variant}
         get("/{owner}/{name}/{kind}/{style}/{variant}") {
-            val owner = call.parameters["owner"]?.takeIf { it.isNotBlank() }
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "missing owner"))
-            val name = call.parameters["name"]?.takeIf { it.isNotBlank() }
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "missing name"))
+            val owner = GitHubIdentifiers.validOwner(call.parameters["owner"])
+                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_owner"))
+            val name = GitHubIdentifiers.validName(call.parameters["name"])
+                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_name"))
             val kind = call.parameters["kind"]!!
 
             val (styleIndex, variant) = parseStyleAndVariant(
