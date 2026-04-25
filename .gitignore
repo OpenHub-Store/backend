@@ -17,6 +17,11 @@ Thumbs.db
 # Environment
 .env
 
+# Private operator notes — never ship publicly. Contains VPS specifics,
+# migration history, deploy commands, and other internal context. Move
+# new internal docs into this directory rather than the root.
+internal/
+
 # Docker volumes (shouldn't be here, but just in case)
 pgdata/
 msdata/
