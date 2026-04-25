@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.RepoRepository
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
+import zed.rainxch.githubstore.util.FeatureFlags
 import kotlin.time.Duration.Companion.hours
 
 class BadgeService(
@@ -134,6 +135,9 @@ class BadgeService(
             log.warn("DB release lookup failed: {}", e.message); null
         }
         if (!fromDb.isNullOrBlank()) return fromDb to false
+
+        // Kill switch: skip live GitHub fallback, render a degraded badge.
+        if (FeatureFlags.disableBadgeFetch) return "—" to true
 
         // Fallback: live GitHub fetch via the existing cached resource client.
         val cacheKey = "badge:release:$owner/$name"

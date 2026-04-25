@@ -10,6 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.ResourceCacheRepository
+import zed.rainxch.githubstore.util.FeatureFlags
 import java.util.concurrent.ConcurrentHashMap
 
 class GitHubResourceClient(
@@ -29,8 +30,8 @@ class GitHubResourceClient(
     }
 
     // Collapses concurrent fetches for the same key into one upstream call.
-    // Map grows to ~= active hot-key count, bounded by cache size in practice.
-    // Mutex objects are tiny (~32B each); not cleaned up deliberately.
+    // Each entry is removed in fetchCached's finally block once the lock is
+    // released, so the map stays bounded by in-flight fetches.
     private val fetchLocks = ConcurrentHashMap<String, Mutex>()
 
     suspend fun fetchCached(
@@ -53,32 +54,44 @@ class GitHubResourceClient(
             }
         }
 
+        // Kill switch: serve cached only, never hit upstream.
+        if (FeatureFlags.disableLiveGitHubPassthrough) {
+            return Result.UpstreamError("passthrough_disabled")
+        }
+
         // Stale or missing — serialize per-key to avoid thundering herd.
         val mutex = fetchLocks.computeIfAbsent(cacheKey) { Mutex() }
-        return mutex.withLock {
-            // Re-check after acquiring: another waiter may have just refreshed it.
-            val afterLock = cacheRepository.get(cacheKey)
-            if (afterLock != null && afterLock.isFresh()) {
-                return@withLock if (afterLock.status in 200..299) {
-                    Result.Hit(afterLock.body, afterLock.status, afterLock.contentType)
-                } else {
-                    Result.NegativeHit(afterLock.status)
+        try {
+            return mutex.withLock {
+                // Re-check after acquiring: another waiter may have just refreshed it.
+                val afterLock = cacheRepository.get(cacheKey)
+                if (afterLock != null && afterLock.isFresh()) {
+                    return@withLock if (afterLock.status in 200..299) {
+                        Result.Hit(afterLock.body, afterLock.status, afterLock.contentType)
+                    } else {
+                        Result.NegativeHit(afterLock.status)
+                    }
                 }
-            }
 
-            fetchFromUpstream(
-                cacheKey = cacheKey,
-                upstreamUrl = upstreamUrl,
-                userToken = userToken,
-                ttlSeconds = ttlSeconds,
-                negativeTtlSeconds = negativeTtlSeconds,
-                contentType = contentType,
-                acceptHeader = acceptHeader,
-                existingEtag = afterLock?.etag,
-                existingBody = afterLock?.body,
-                existingStatus = afterLock?.status,
-                existingContentType = afterLock?.contentType,
-            )
+                fetchFromUpstream(
+                    cacheKey = cacheKey,
+                    upstreamUrl = upstreamUrl,
+                    userToken = userToken,
+                    ttlSeconds = ttlSeconds,
+                    negativeTtlSeconds = negativeTtlSeconds,
+                    contentType = contentType,
+                    acceptHeader = acceptHeader,
+                    existingEtag = afterLock?.etag,
+                    existingBody = afterLock?.body,
+                    existingStatus = afterLock?.status,
+                    existingContentType = afterLock?.contentType,
+                )
+            }
+        } finally {
+            // Reclaim the per-key mutex so the map doesn't grow unbounded.
+            // remove(key, value) is a no-op if a concurrent waiter has already
+            // installed a new mutex for this key — safe under contention.
+            fetchLocks.remove(cacheKey, mutex)
         }
     }
 

@@ -28,7 +28,9 @@ import zed.rainxch.githubstore.db.Repos
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.ranking.SearchScore
+import zed.rainxch.githubstore.util.FeatureFlags
 import zed.rainxch.githubstore.util.formatRecency
+import zed.rainxch.githubstore.util.queryHash
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -163,6 +165,10 @@ class GitHubSearchClient(
     ): List<RepoResponse> {
         try {
             if (queryIsBlocked(query)) return emptyList()
+            if (FeatureFlags.disableLiveGitHubPassthrough) {
+                log.info("Live GitHub passthrough disabled; skipping query={}", queryHash(query))
+                return emptyList()
+            }
 
             val token = userToken ?: pickFallbackToken()
             var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
@@ -180,13 +186,13 @@ class GitHubSearchClient(
                 persistenceGate.withPermit {
                     val scoredByRepoId = ingestToPostgres(withInstallers)
                     syncToMeilisearch(withInstallers, scoredByRepoId)
-                    log.info("On-demand ingest: {} repos for query '{}'", withInstallers.size, query)
+                    log.info("On-demand ingest: {} repos for query={}", withInstallers.size, queryHash(query))
                 }
             }
 
             return withInstallers.map { it.toRepoResponse() }
         } catch (e: Exception) {
-            log.warn("GitHub search passthrough failed for query '{}': {}", query, e.message)
+            log.warn("GitHub search passthrough failed for query={}: {}", queryHash(query), e.message)
             return emptyList()
         }
     }
@@ -203,6 +209,10 @@ class GitHubSearchClient(
     ): ExploreResult {
         try {
             if (queryIsBlocked(query)) return ExploreResult(emptyList(), hasMore = false)
+            if (FeatureFlags.disableLiveGitHubPassthrough) {
+                log.info("Live GitHub passthrough disabled; skipping explore query={} page={}", queryHash(query), page)
+                return ExploreResult(emptyList(), hasMore = false)
+            }
 
             val token = userToken ?: pickFallbackToken()
             // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
@@ -233,7 +243,7 @@ class GitHubSearchClient(
                     persistenceGate.withPermit {
                         val scoredByRepoId = ingestToPostgres(withInstallers)
                         syncToMeilisearch(withInstallers, scoredByRepoId)
-                        log.info("Explore ingest: {} repos for query '{}' page={}", withInstallers.size, query, page)
+                        log.info("Explore ingest: {} repos for query={} page={}", withInstallers.size, queryHash(query), page)
                     }
                 }
             }
@@ -247,7 +257,7 @@ class GitHubSearchClient(
             val hasMore = repos.size >= 10 && withInstallers.isNotEmpty()
             return ExploreResult(withInstallers.map { it.toRepoResponse() }, hasMore = hasMore)
         } catch (e: Exception) {
-            log.warn("Explore failed for query '{}' page {}: {}", query, page, e.message)
+            log.warn("Explore failed for query={} page {}: {}", queryHash(query), page, e.message)
             return ExploreResult(emptyList(), hasMore = false)
         }
     }
@@ -259,6 +269,7 @@ class GitHubSearchClient(
         token: String?,
         nameMatch: Boolean,
     ): List<RepoWithRelease> {
+        if (FeatureFlags.disableLiveGitHubPassthrough) return emptyList()
         val repos = searchGitHub(
             query = query,
             limit = 30,
@@ -355,6 +366,7 @@ class GitHubSearchClient(
     // Returns null if the repo is gone (404), archived, or has no installable
     // release — the caller uses that to soft-delete / mark stale.
     internal suspend fun refreshRepo(fullName: String, token: String? = pickFallbackToken()): RefreshResult {
+        if (FeatureFlags.disableLiveGitHubPassthrough) return RefreshResult.TransientFailure
         val metaResponse = try {
             client.get("https://api.github.com/repos/$fullName") {
                 header("Accept", "application/vnd.github+json")
