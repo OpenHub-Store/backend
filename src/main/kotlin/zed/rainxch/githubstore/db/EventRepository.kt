@@ -3,6 +3,7 @@ package zed.rainxch.githubstore.db
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
 import zed.rainxch.githubstore.model.EventRequest
+import zed.rainxch.githubstore.util.PrivacyHash
 import java.time.OffsetDateTime
 
 class EventRepository {
@@ -12,7 +13,7 @@ class EventRepository {
             for (event in events) {
                 Events.insert {
                     it[ts] = OffsetDateTime.now()
-                    it[deviceId] = event.deviceId
+                    it[deviceId] = PrivacyHash.hash(event.deviceId)
                     it[platform] = event.platform
                     it[appVersion] = event.appVersion
                     it[eventType] = event.eventType

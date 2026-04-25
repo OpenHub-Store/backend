@@ -61,11 +61,13 @@ object DatabaseFactory {
                 "V3__search_miss_processing.sql",
                 "V4__signals_and_search_score.sql",
                 "V5__resource_cache.sql",
+                "V6__hash_device_id_drop_query_sample.sql",
             )
             for (migration in migrations) {
-                val sql = this::class.java.classLoader
+                val rawSql = this::class.java.classLoader
                     .getResourceAsStream("db/migration/$migration")
                     ?.bufferedReader()?.readText() ?: continue
+                val sql = preprocessMigration(migration, rawSql) ?: continue
                 try {
                     exec(sql)
                 } catch (e: Exception) {
@@ -99,4 +101,26 @@ object DatabaseFactory {
 
     private fun env(name: String, default: String): String =
         System.getenv(name) ?: default
+
+    // V6 uses a psql-style :'device_id_pepper' variable that Exposed's exec()
+    // doesn't bind. We do a one-shot string substitution with the env-supplied
+    // pepper here (single-quoted, with embedded single-quotes doubled per SQL
+    // rules). If DEVICE_ID_PEPPER is unset, we skip V6 entirely and log loudly
+    // so the operator can re-run after setting the env var. The migration is
+    // designed to be idempotent: the column drop uses IF EXISTS and the rehash
+    // skips rows that already look like 64-hex.
+    private fun preprocessMigration(name: String, sql: String): String? {
+        if (!sql.contains(":'device_id_pepper'")) return sql
+        val pepper = System.getenv("DEVICE_ID_PEPPER")?.takeIf { it.isNotBlank() }
+        if (pepper == null) {
+            log.warn(
+                "Migration {}: DEVICE_ID_PEPPER not set, SKIPPING. " +
+                    "Set the env var and restart to apply column drop and rehash.",
+                name,
+            )
+            return null
+        }
+        val escaped = "'" + pepper.replace("'", "''") + "'"
+        return sql.replace(":'device_id_pepper'", escaped)
+    }
 }

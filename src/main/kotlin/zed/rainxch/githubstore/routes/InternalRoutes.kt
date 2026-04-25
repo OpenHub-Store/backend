@@ -109,13 +109,16 @@ private fun fetchDbMetrics(): TrainingMetrics = transaction {
         ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
     }
 
+    // Top misses: report only the hash-prefix and counts. Raw query text is
+    // no longer stored (privacy hardening, V6) so the dashboard surfaces an
+    // 8-char identifier per query — useful for spotting hotspots without
+    // exposing what users typed.
     val topMisses = mutableListOf<TopMiss>()
     conn.prepareStatement(
         """
-        SELECT query_sample, miss_count, result_count, last_seen_at
+        SELECT query_hash, miss_count, result_count, last_seen_at
         FROM search_misses
-        WHERE query_sample IS NOT NULL
-          AND last_seen_at > NOW() - INTERVAL '7 days'
+        WHERE last_seen_at > NOW() - INTERVAL '7 days'
         ORDER BY miss_count DESC
         LIMIT 20
         """.trimIndent()
@@ -124,7 +127,7 @@ private fun fetchDbMetrics(): TrainingMetrics = transaction {
             while (rs.next()) {
                 topMisses.add(
                     TopMiss(
-                        query = rs.getString("query_sample"),
+                        query = rs.getString("query_hash")?.take(8) ?: "—",
                         missCount = rs.getInt("miss_count"),
                         resultCount = rs.getObject("result_count") as? Int,
                         lastSeenAt = rs.getTimestamp("last_seen_at")?.toInstant()?.toString(),

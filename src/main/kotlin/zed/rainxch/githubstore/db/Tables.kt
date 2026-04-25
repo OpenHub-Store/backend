@@ -85,7 +85,6 @@ object RepoStatsDaily : Table("repo_stats_daily") {
 
 object SearchMisses : Table("search_misses") {
     val queryHash = text("query_hash")
-    val querySample = text("query_sample").nullable()
     val missCount = integer("miss_count").default(1)
     val lastSeenAt = timestampWithTimeZone("last_seen_at")
     val lastProcessedAt = timestampWithTimeZone("last_processed_at").nullable()
