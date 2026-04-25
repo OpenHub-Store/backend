@@ -89,6 +89,10 @@ services:
       # accidentally-open dashboard after a bad deploy.
       APP_ENV: production
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # Pepper for hashing device IDs before they hit Postgres. Required in
+      # production; rotating this invalidates existing hashes (acceptable —
+      # privacy hardening V6).
+      DEVICE_ID_PEPPER: ${DEVICE_ID_PEPPER}
     depends_on:
       postgres:
         condition: service_healthy
