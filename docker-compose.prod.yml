@@ -2,6 +2,9 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    # 3 GB ceiling. Postgres on a 4 vCPU / 8 GB host with shared_buffers at
+    # the Alpine default sits well under this.
+    mem_limit: 3g
     environment:
       POSTGRES_DB: githubstore
       POSTGRES_USER: githubstore
@@ -16,10 +19,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   meilisearch:
     image: getmeili/meilisearch:v1.14
     restart: unless-stopped
+    mem_limit: 2g
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_ENV: production
@@ -30,13 +39,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   app:
     build: .
     restart: unless-stopped
-    # 2 GB ceiling. Combined with Postgres + Meilisearch, fits well under the
-    # VPS's 8 GB. -XX:MaxRAMPercentage=50 in the Dockerfile reads this.
+    # 2 GB ceiling. Combined with Postgres + Meilisearch + Caddy this fits
+    # on the 8 GB VPS with ~750 MB headroom for kernel + system.
+    # -XX:MaxRAMPercentage=50 in the Dockerfile reads this.
     mem_limit: 2g
+    # Defense in depth: the fat-jar runs with no need to write outside
+    # /tmp. read_only mounts the rootfs RO; tmpfs gives the JVM somewhere
+    # to drop class-data archives, sockets, etc.
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/githubstore
       DATABASE_USER: githubstore
@@ -79,10 +100,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 256m
     ports:
       - "80:80"
       - "443:443"
@@ -93,6 +120,11 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   pgdata:

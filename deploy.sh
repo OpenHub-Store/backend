@@ -29,10 +29,20 @@ ssh "$SSH_USER@$SERVER_IP" "cd $REMOTE_DIR && docker compose -f docker-compose.p
 # running Caddy process. Gracefully reload if the file changed since last deploy.
 # (Reload, not restart — avoids a TLS reconnect blip for live traffic.)
 echo "==> Reloading Caddy config..."
-ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-caddy-1 caddy reload --config /etc/caddy/Caddyfile || docker compose -f $REMOTE_DIR/docker-compose.prod.yml restart caddy"
+ssh "$SSH_USER@$SERVER_IP" "docker compose -f $REMOTE_DIR/docker-compose.prod.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f $REMOTE_DIR/docker-compose.prod.yml restart caddy"
 
+# Poll /v1/health until it returns 200, with a hard 60s ceiling.
+# A failing curl must fail the deploy script — the previous `|| echo`
+# version swallowed the non-zero exit and reported "Deploy complete" on
+# unhealthy boots.
 echo "==> Waiting for health check..."
-sleep 15
-ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-app-1 curl -sf http://localhost:8080/v1/health || echo 'Health check failed!'"
-
-echo "==> Deploy complete!"
+for i in $(seq 1 30); do
+    if ssh "$SSH_USER@$SERVER_IP" "docker exec github-store-backend-app-1 curl -sf http://localhost:8080/v1/health" >/dev/null 2>&1; then
+        echo "==> Healthy after $((i*2))s"
+        echo "==> Deploy complete!"
+        exit 0
+    fi
+    sleep 2
+done
+echo "Health check failed after 60s" >&2
+exit 1
