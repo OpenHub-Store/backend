@@ -76,6 +76,14 @@ These are pulled at deploy time, not bundled into the fat JAR, but they are part
 
 ---
 
+## Bundled assets (shipped inside the JAR)
+
+| Asset                       | License        | Source                                                 |
+|-----------------------------|----------------|--------------------------------------------------------|
+| Inter (Bold)                | SIL OFL 1.1    | https://github.com/rsms/inter                          |
+
+The Inter-Bold TrueType font is bundled at `src/main/resources/fonts/Inter-Bold.ttf` and used at startup to extract glyph paths for the badge renderer. Every badge SVG response is composed of those pre-vectorized glyphs, so the font is part of what every badge embed ultimately serves.
+
 ## Asset attributions (runtime / non-code)
 
 These cover assets that may be served by, or reference resources from, the GitHub Store ecosystem the backend belongs to. Listed here so the backend's distribution carries the same notices the client does.
@@ -93,4 +101,4 @@ Licensed under the Apache License, Version 2.0. See [`LICENSE`](./LICENSE) for t
 
 The "GitHub" name is a trademark of GitHub, Inc. The GitHub Store project is independent of, and not endorsed by, GitHub, Inc.
 
-Last updated: 2026-04-25
+Last updated: 2026-04-26
