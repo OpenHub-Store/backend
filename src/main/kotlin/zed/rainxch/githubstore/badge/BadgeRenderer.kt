@@ -6,26 +6,16 @@ object BadgeRenderer {
     private const val PAD = 16
     private const val ICON_SIZE = 18
     private const val ICON_GAP = 6
-    private const val FONT_SIZE = 16
-    private const val DEFAULT_CHAR_WIDTH = 10.0
 
-    // Per-character widths approximating bold rendering at 16px. Tuned so the
-    // resulting badge widths land near ziadOUA/m3-Markdown-Badges's hand-laid
-    // out static badges (e.g. "Android" at ~138px including 18px icon + gap).
-    private val charWidth: Map<Char, Double> = buildMap {
-        " .,:;!|".forEach { put(it, 5.0) }
-        "iIlrt".forEach { put(it, 6.5) }
-        "0123456789".forEach { put(it, 9.5) }
-        "MWmw".forEach { put(it, 14.0) }
-        "-/".forEach { put(it, 7.5) }
-    }
-
-    private fun estimateTextWidthPx(text: String): Int =
-        text.sumOf { charWidth[it] ?: DEFAULT_CHAR_WIDTH }.toInt() + 1
+    // Optical baseline for Inter-Bold at 16px in a 30px-tall pill. Tuned by
+    // eye against ziadOUA's static badges so the ascender/descender sit
+    // visually centered.
+    private const val TEXT_BASELINE_Y = 21.0
 
     private fun computeBadgeWidth(text: String, hasIcon: Boolean): Int {
         val iconPart = if (hasIcon) ICON_SIZE + ICON_GAP else 0
-        return PAD + iconPart + estimateTextWidthPx(text) + PAD
+        val textWidth = BadgeGlyphs.textWidth(text)
+        return PAD + iconPart + textWidth.toInt() + PAD + 1
     }
 
     fun render(
@@ -41,7 +31,6 @@ object BadgeRenderer {
 
         val iconOffset = if (iconPath != null) PAD else 0
         val textOffset = if (iconPath != null) PAD + ICON_SIZE + ICON_GAP else PAD
-        val textY = (height + FONT_SIZE) / 2 - 1
         val iconScale = ICON_SIZE / 24.0
         val iconY = (height - ICON_SIZE) / 2.0
 
@@ -51,15 +40,27 @@ object BadgeRenderer {
             """<g transform="translate($iconOffset,$iconY) scale($iconScale)"><path d="$iconPath" fill="${palette.foreground}"/></g>"""
         } else ""
 
-        val safeText = escapeXml(text)
+        // Each character becomes its own <path>, translated by the cumulative
+        // advance width. The result renders identically in every browser /
+        // markdown viewer because there's no font dependency at render time.
+        val glyphSvg = StringBuilder()
+        var x = textOffset.toDouble()
+        for (ch in text) {
+            val g = BadgeGlyphs.glyph(ch)
+            if (g.path.isNotEmpty()) {
+                glyphSvg.append("""<path transform="translate(${fmt(x)},$TEXT_BASELINE_Y)" d="${g.path}" fill="${palette.foreground}"/>""")
+            }
+            x += g.advance
+        }
 
-        // The text is also stroked at half a pixel in the same fill color.
-        // This adds visible weight to the glyphs without depending on the
-        // browser actually loading a heavy-weight font — `<text>` rendering
-        // inside `<img>` falls back to system fonts which often look thinner
-        // than the vectorized paths used by the m3-Markdown-Badges project.
-        // A 0.5px stroke closes most of the visual gap.
-        return """<svg xmlns="http://www.w3.org/2000/svg" width="$width" height="$height" viewBox="0 0 $width $height" role="img" aria-label="$safeText">$rectSvg$iconSvg<text x="$textOffset" y="$textY" font-family="'Inter','Roboto','Segoe UI',system-ui,-apple-system,sans-serif" font-size="$FONT_SIZE" font-weight="800" fill="${palette.foreground}" stroke="${palette.foreground}" stroke-width="0.5" paint-order="stroke fill">$safeText</text></svg>"""
+        val safeAria = escapeXml(text)
+        return """<svg xmlns="http://www.w3.org/2000/svg" width="$width" height="$height" viewBox="0 0 $width $height" role="img" aria-label="$safeAria">$rectSvg$iconSvg$glyphSvg</svg>"""
+    }
+
+    private fun fmt(d: Double): String {
+        val rounded = (d * 100).toLong() / 100.0
+        return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString()
+        else "%.2f".format(rounded)
     }
 
     private fun escapeXml(s: String): String =

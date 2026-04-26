@@ -19,4 +19,4 @@ EXPOSE 8080
 # services if traffic bursts. -XX:+ExitOnOutOfMemoryError makes OOMs
 # crash the container so docker-compose restarts it instead of leaving a
 # zombie.
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=50", "-XX:+ExitOnOutOfMemoryError", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Djava.awt.headless=true", "-XX:MaxRAMPercentage=50", "-XX:+ExitOnOutOfMemoryError", "-jar", "app.jar"]
