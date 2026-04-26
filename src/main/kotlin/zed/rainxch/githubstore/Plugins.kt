@@ -6,6 +6,8 @@ import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.compression.*
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.plugins.autohead.*
@@ -189,6 +191,20 @@ fun Application.configureHTTP() {
     }
 
     install(StatusPages) {
+        // Client-error exceptions thrown by Ktor's content-negotiation, request-
+        // validation, and parameter-conversion plugins. These are 4xx by nature
+        // — malformed JSON, wrong shape, bad path/query types — and surfacing
+        // them as 500 + Sentry events is misleading and quota-burning.
+        exception<BadRequestException> { call, cause ->
+            val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
+            call.application.environment.log.info(
+                "Bad request (rid={}): {}", rid ?: "-", cause.javaClass.simpleName,
+            )
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_request"))
+        }
+        exception<NotFoundException> { call, _ ->
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "not_found"))
+        }
         exception<Throwable> { call, cause ->
             val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
             call.application.environment.log.error(
