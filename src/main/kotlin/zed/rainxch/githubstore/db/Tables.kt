@@ -107,3 +107,16 @@ object RepoSignals : Table("repo_signals") {
 
     override val primaryKey = PrimaryKey(repoId)
 }
+
+object TelemetryEvents : Table("telemetry_events") {
+    val id = long("id").autoIncrement()
+    val ts = timestampWithTimeZone("ts")
+    val name = text("name")
+    val sessionId = text("session_id")
+    val platform = text("platform").nullable()
+    val appVersion = text("app_version").nullable()
+    val props = text("props")
+    val receivedAt = timestampWithTimeZone("received_at")
+
+    override val primaryKey = PrimaryKey(id)
+}
