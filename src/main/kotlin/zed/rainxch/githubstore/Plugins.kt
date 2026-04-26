@@ -132,6 +132,15 @@ fun Application.configureHTTP() {
                 call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
             }
         }
+        // Telemetry: clients batch up to 100 events per POST, so volume per
+        // session is naturally low. 600/min/IP comfortably covers a chatty
+        // session yet still caps a misbehaving client at 60k events/min/IP.
+        register(RateLimitName("telemetry")) {
+            rateLimiter(limit = 600, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
+            }
+        }
         // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
         // keeps abuse impossible without blocking legitimate retries after a
         // failed or cancelled flow.

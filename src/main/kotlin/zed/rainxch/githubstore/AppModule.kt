@@ -16,6 +16,7 @@ import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.badge.FdroidVersionClient
+import zed.rainxch.githubstore.telemetry.TelemetryRepository
 
 val appModule = module {
     single { EventRepository() }
@@ -33,4 +34,5 @@ val appModule = module {
     single { SearchMetricsRegistry() }
     single { FdroidVersionClient(packageId = "zed.rainxch.githubstore") }
     single { BadgeService(repoRepository = get(), resourceClient = get(), fdroidClient = get()) }
+    single { TelemetryRepository() }
 }
