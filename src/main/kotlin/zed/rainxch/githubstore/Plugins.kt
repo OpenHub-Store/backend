@@ -132,6 +132,25 @@ fun Application.configureHTTP() {
                 call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
             }
         }
+        // E1 signing-seeds: paginated dump for the client's local seed table.
+        // Initial sync is 5–15 page fetches; daily delta is typically 1 page.
+        // 30/min is generous for legitimate sync cycles and tight enough to
+        // discourage scraping the seed table for fingerprint→repo lookups.
+        register(RateLimitName("signing-seeds")) {
+            rateLimiter(limit = 30, refillPeriod = 1.minutes)
+            requestKey { call ->
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
+            }
+        }
+        // E1 external-match: anonymous, called once per import wizard run.
+        // 60/hr/IP per the handoff doc; tighter than the search bucket since
+        // each call fans out to GitHub search + asset enumeration.
+        register(RateLimitName("external-match")) {
+            rateLimiter(limit = 60, refillPeriod = 1.hours)
+            requestKey { call ->
+                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
+            }
+        }
         // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
         // keeps abuse impossible without blocking legitimate retries after a
         // failed or cancelled flow.

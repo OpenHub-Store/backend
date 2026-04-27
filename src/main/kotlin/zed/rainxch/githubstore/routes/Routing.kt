@@ -14,6 +14,7 @@ import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
+import zed.rainxch.githubstore.match.SigningFingerprintRepository
 
 fun Application.configureRouting() {
     val eventRepository by inject<EventRepository>()
@@ -26,6 +27,7 @@ fun Application.configureRouting() {
     val resourceClient by inject<GitHubResourceClient>()
     val searchMetrics by inject<SearchMetricsRegistry>()
     val badgeService by inject<BadgeService>()
+    val signingFingerprintRepository by inject<SigningFingerprintRepository>()
 
     routing {
         route("/v1") {
@@ -44,6 +46,9 @@ fun Application.configureRouting() {
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics)
+            rateLimit(RateLimitName("signing-seeds")) {
+                signingSeedsRoutes(signingFingerprintRepository)
+            }
             rateLimit(RateLimitName("badges")) {
                 badgeRoutes(badgeService)
             }
