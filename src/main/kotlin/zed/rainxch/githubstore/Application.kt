@@ -11,6 +11,7 @@ import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.SearchMissWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
+import zed.rainxch.githubstore.match.FdroidSeedWorker
 import zed.rainxch.githubstore.routes.configureRouting
 
 fun main() {
@@ -68,6 +69,9 @@ fun Application.module() {
 
     val repoRefreshWorker by inject<RepoRefreshWorker>()
     repoRefreshWorker.start()
+
+    val fdroidSeedWorker by inject<FdroidSeedWorker>()
+    fdroidSeedWorker.start()
 }
 
 // Under APP_ENV=production, refuse to start unless the critical secrets are
