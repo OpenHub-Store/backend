@@ -8,11 +8,11 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
-class TelemetryRepository {
+open class TelemetryRepository {
 
     private val json = Json { encodeDefaults = false }
 
-    fun insertBatch(events: List<TelemetryEvent>) {
+    open fun insertBatch(events: List<TelemetryEvent>) {
         if (events.isEmpty()) return
         val now = OffsetDateTime.now(ZoneOffset.UTC)
         transaction {
