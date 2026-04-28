@@ -14,10 +14,11 @@ object FeatureFlags {
 
 // Short opaque tag for log lines that previously printed the raw query.
 // Reuses SearchMissRepository.canonicalize so the same query produces the
-// same tag across the codebase. SHA-256 truncated to 8 hex chars — enough
-// to correlate log lines, not enough to invert.
+// same tag across the codebase. SHA-256 truncated to 16 hex chars (64 bits)
+// — enough to be practically collision-free for our query volume, not
+// enough to invert.
 fun queryHash(query: String): String {
     val canonical = SearchMissRepository.canonicalize(query)
     val bytes = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())
-    return bytes.joinToString("") { "%02x".format(it) }.take(8)
+    return bytes.joinToString("") { "%02x".format(it) }.take(16)
 }
