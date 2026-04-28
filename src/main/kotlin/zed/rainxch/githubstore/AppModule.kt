@@ -17,6 +17,7 @@ import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.badge.FdroidVersionClient
+import zed.rainxch.githubstore.telemetry.TelemetryQueue
 import zed.rainxch.githubstore.telemetry.TelemetryRepository
 
 val appModule = module {
@@ -37,4 +38,5 @@ val appModule = module {
     single { FdroidVersionClient(packageId = "zed.rainxch.githubstore") }
     single { BadgeService(repoRepository = get(), resourceClient = get(), fdroidClient = get()) }
     single { TelemetryRepository() }
+    single { TelemetryQueue(get()) }
 }

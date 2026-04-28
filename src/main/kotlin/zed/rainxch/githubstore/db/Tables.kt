@@ -1,9 +1,31 @@
 package zed.rainxch.githubstore.db
 
+import org.jetbrains.exposed.sql.ColumnType
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.kotlin.datetime.date
 import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
+import org.postgresql.util.PGobject
+
+// Postgres JSONB column that round-trips raw JSON strings. The JDBC driver
+// rejects setString on a JSONB target without a cast, so we wrap as PGobject.
+private class JsonbStringColumnType : ColumnType<String>() {
+    override fun sqlType(): String = "JSONB"
+
+    override fun valueFromDB(value: Any): String = when (value) {
+        is PGobject -> value.value ?: "{}"
+        is String -> value
+        else -> value.toString()
+    }
+
+    override fun notNullValueToDB(value: String): Any = PGobject().apply {
+        type = "jsonb"
+        this.value = value
+    }
+}
+
+private fun Table.jsonbString(name: String) =
+    registerColumn<String>(name, JsonbStringColumnType())
 
 object Repos : Table("repos") {
     val id = long("id")
@@ -115,7 +137,7 @@ object TelemetryEvents : Table("telemetry_events") {
     val sessionId = text("session_id")
     val platform = text("platform").nullable()
     val appVersion = text("app_version").nullable()
-    val props = text("props")
+    val props = jsonbString("props")
     val receivedAt = timestampWithTimeZone("received_at")
 
     override val primaryKey = PrimaryKey(id)
