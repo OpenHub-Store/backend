@@ -1,12 +1,13 @@
 package zed.rainxch.githubstore.db
 
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.exposed.sql.transactions.TransactionManager
-import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import java.time.OffsetDateTime
 
 class ResourceCacheRepository {
 
-    fun get(key: String): CacheEntry? = transaction {
+    suspend fun get(key: String): CacheEntry? = newSuspendedTransaction(Dispatchers.IO) {
         val conn = TransactionManager.current().connection.connection as java.sql.Connection
         conn.prepareStatement(
             """
@@ -17,7 +18,7 @@ class ResourceCacheRepository {
         ).use { ps ->
             ps.setString(1, key)
             ps.executeQuery().use { rs ->
-                if (!rs.next()) return@transaction null
+                if (!rs.next()) return@newSuspendedTransaction null
                 CacheEntry(
                     key = rs.getString("cache_key"),
                     body = rs.getString("body"),
@@ -31,7 +32,7 @@ class ResourceCacheRepository {
         }
     }
 
-    fun put(
+    suspend fun put(
         key: String,
         body: String,
         etag: String?,
@@ -41,7 +42,7 @@ class ResourceCacheRepository {
     ) {
         val now = OffsetDateTime.now()
         val expires = now.plusSeconds(ttlSeconds)
-        transaction {
+        newSuspendedTransaction(Dispatchers.IO) {
             val conn = TransactionManager.current().connection.connection as java.sql.Connection
             conn.prepareStatement(
                 """
@@ -73,10 +74,10 @@ class ResourceCacheRepository {
 
     // Called after a 304 revalidation — body + etag unchanged, just push
     // fetched_at and expires_at forward so the next access treats it as fresh.
-    fun refreshTtl(key: String, ttlSeconds: Long) {
+    suspend fun refreshTtl(key: String, ttlSeconds: Long) {
         val now = OffsetDateTime.now()
         val expires = now.plusSeconds(ttlSeconds)
-        transaction {
+        newSuspendedTransaction(Dispatchers.IO) {
             val conn = TransactionManager.current().connection.connection as java.sql.Connection
             conn.prepareStatement(
                 "UPDATE resource_cache SET fetched_at = ?, expires_at = ? WHERE cache_key = ?"
@@ -92,7 +93,7 @@ class ResourceCacheRepository {
     // Housekeeping — drop entries nobody has touched in a long time. Called
     // from the existing RepoRefreshWorker so we don't add a new worker for one
     // cleanup query. Returns the row count swept for logging.
-    fun sweepStale(olderThanDays: Long = 30): Int = transaction {
+    suspend fun sweepStale(olderThanDays: Long = 30): Int = newSuspendedTransaction(Dispatchers.IO) {
         val cutoff = OffsetDateTime.now().minusDays(olderThanDays)
         val conn = TransactionManager.current().connection.connection as java.sql.Connection
         conn.prepareStatement(
