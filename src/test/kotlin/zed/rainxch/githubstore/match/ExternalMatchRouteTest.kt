@@ -20,6 +20,9 @@ class ExternalMatchRouteTest {
     private class StubService : ExternalMatchService(
         signingFingerprintRepository = SigningFingerprintRepository(),
         cache = zed.rainxch.githubstore.db.ResourceCacheRepository(),
+        searchClient = zed.rainxch.githubstore.ingest.GitHubSearchClient(
+            zed.rainxch.githubstore.db.MeilisearchClient(),
+        ),
     ) {
         override suspend fun matchOne(req: ExternalMatchCandidateRequest): List<ExternalMatchCandidate> =
             listOf(

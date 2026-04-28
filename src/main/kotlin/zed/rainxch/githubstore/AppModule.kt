@@ -37,6 +37,6 @@ val appModule = module {
     single { FdroidVersionClient(packageId = "zed.rainxch.githubstore") }
     single { BadgeService(repoRepository = get(), resourceClient = get(), fdroidClient = get()) }
     single { SigningFingerprintRepository() }
-    single { ExternalMatchService(signingFingerprintRepository = get(), cache = get()) }
+    single { ExternalMatchService(signingFingerprintRepository = get(), cache = get(), searchClient = get()) }
     single { FdroidSeedWorker() }
 }

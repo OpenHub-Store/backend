@@ -18,11 +18,17 @@ import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.ResourceCacheRepository
 import zed.rainxch.githubstore.ingest.GitHubRepo
 import zed.rainxch.githubstore.ingest.GitHubRelease
+import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.util.FeatureFlags
 
 open class ExternalMatchService(
     private val signingFingerprintRepository: SigningFingerprintRepository,
     private val cache: ResourceCacheRepository,
+    // Shares the rotation pool with GitHubSearchClient so external-match
+    // upstream calls don't independently exhaust GitHub's anonymous limit
+    // (60/hr per source IP — our VPS IP) and respect the quiet-window
+    // guarantee for the daily Python fetcher.
+    private val searchClient: GitHubSearchClient,
 ) {
     private val log = LoggerFactory.getLogger(ExternalMatchService::class.java)
 
@@ -111,10 +117,12 @@ open class ExternalMatchService(
     }
 
     private suspend fun validateManifestHint(owner: String, repo: String): ExternalMatchCandidate? {
+        val token = searchClient.pickFallbackToken()
         val resp = try {
             http.get("https://api.github.com/repos/$owner/$repo") {
                 header(HttpHeaders.Accept, "application/vnd.github+json")
                 header(HttpHeaders.UserAgent, "GithubStoreBackend/1.0 (ExternalMatch)")
+                if (token != null) header(HttpHeaders.Authorization, "token $token")
             }
         } catch (e: Exception) {
             log.warn("Manifest hint validation failed for {}/{}: {}", owner, repo, e.message)
@@ -133,13 +141,17 @@ open class ExternalMatchService(
     }
 
     private suspend fun searchAndScore(req: ExternalMatchCandidateRequest): List<ExternalMatchCandidate> {
+        val token = searchClient.pickFallbackToken()
         val items: List<GitHubRepo> = try {
             val response = http.get("https://api.github.com/search/repositories") {
                 parameter("q", "${req.appLabel} fork:false")
-                parameter("per_page", 10)
+                // Spec §3.2 says "score top 5 search results" — fetch exactly 5
+                // so the per-result asset-probe fan-out matches what we score.
+                parameter("per_page", 5)
                 parameter("sort", "stars")
                 header(HttpHeaders.Accept, "application/vnd.github+json")
                 header(HttpHeaders.UserAgent, "GithubStoreBackend/1.0 (ExternalMatch)")
+                if (token != null) header(HttpHeaders.Authorization, "token $token")
             }
             if (!response.status.isSuccess()) {
                 emptyList()
@@ -186,10 +198,12 @@ open class ExternalMatchService(
     }
 
     private suspend fun hasRecentAndroidAsset(owner: String, repo: String): Boolean {
+        val token = searchClient.pickFallbackToken()
         val resp = try {
             http.get("https://api.github.com/repos/$owner/$repo/releases?per_page=5") {
                 header(HttpHeaders.Accept, "application/vnd.github+json")
                 header(HttpHeaders.UserAgent, "GithubStoreBackend/1.0 (ExternalMatch)")
+                if (token != null) header(HttpHeaders.Authorization, "token $token")
             }
         } catch (_: Exception) {
             return false
@@ -207,7 +221,11 @@ open class ExternalMatchService(
     }
 
     private fun cacheKey(packageName: String, appLabel: String): String =
-        "external-match:$packageName|$appLabel"
+        // NUL byte separator. Both packageName (regex-validated to no
+        // control chars) and appLabel can never legally contain a NUL,
+        // so the join is unambiguously reversible — collision-proof
+        // even if route validation regresses in a future change.
+        "external-match:${packageName}\u0001${appLabel}"
 
     private companion object {
         const val MANIFEST_CONFIDENCE = 1.0
