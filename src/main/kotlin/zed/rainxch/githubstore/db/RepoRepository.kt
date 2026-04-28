@@ -1,7 +1,8 @@
 package zed.rainxch.githubstore.db
 
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.util.formatRecency
@@ -10,14 +11,14 @@ import java.time.temporal.ChronoUnit
 
 class RepoRepository {
 
-    fun findByOwnerAndName(owner: String, name: String): RepoResponse? = transaction {
+    suspend fun findByOwnerAndName(owner: String, name: String): RepoResponse? = newSuspendedTransaction(Dispatchers.IO) {
         Repos.selectAll()
             .where { (Repos.owner eq owner) and (Repos.name eq name) }
             .firstOrNull()
             ?.toRepoResponse()
     }
 
-    fun findByCategory(category: String, platform: String, limit: Int = 50): List<RepoResponse> = transaction {
+    suspend fun findByCategory(category: String, platform: String, limit: Int = 50): List<RepoResponse> = newSuspendedTransaction(Dispatchers.IO) {
         // Primary: dynamic behavioral search_score (updated hourly by
         // SignalAggregationWorker from clicks / installs / stars / freshness).
         // Tie-breaker: the static rank the Python fetcher writes once a day,
@@ -37,7 +38,7 @@ class RepoRepository {
             .map { it.toRepoResponse(category = category) }
     }
 
-    fun findByTopicBucket(bucket: String, platform: String, limit: Int = 50): List<RepoResponse> = transaction {
+    suspend fun findByTopicBucket(bucket: String, platform: String, limit: Int = 50): List<RepoResponse> = newSuspendedTransaction(Dispatchers.IO) {
         Repos.innerJoin(RepoTopicBuckets, { id }, { repoId })
             .selectAll()
             .where {
