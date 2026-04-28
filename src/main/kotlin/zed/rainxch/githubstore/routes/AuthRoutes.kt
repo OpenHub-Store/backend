@@ -7,13 +7,19 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.ingest.GitHubDeviceClient
+import zed.rainxch.githubstore.requireMaxBody
+import zed.rainxch.githubstore.util.ApiError
 
 private val log = LoggerFactory.getLogger("AuthRoutes")
+
+private const val START_MAX_BODY = 1L * 1024
+private const val POLL_MAX_BODY = 4L * 1024
 
 fun Route.authRoutes(deviceClient: GitHubDeviceClient) {
     route("/auth/device") {
         rateLimit(RateLimitName("auth-start")) {
             post("/start") {
+                if (!call.requireMaxBody(START_MAX_BODY)) return@post
                 try {
                     val result = deviceClient.startDeviceFlow()
                     val outStatus = if (result.status.isSuccess()) {
@@ -30,7 +36,7 @@ fun Route.authRoutes(deviceClient: GitHubDeviceClient) {
                     log.warn("auth/device/start upstream error: {}", e.message)
                     call.respond(
                         HttpStatusCode.BadGateway,
-                        mapOf("error" to "github_unreachable"),
+                        ApiError("github_unreachable"),
                     )
                 }
             }
@@ -38,18 +44,19 @@ fun Route.authRoutes(deviceClient: GitHubDeviceClient) {
 
         rateLimit(RateLimitName("auth-poll")) {
             post("/poll") {
+                if (!call.requireMaxBody(POLL_MAX_BODY)) return@post
                 val form = try {
                     call.receiveParameters()
                 } catch (e: Exception) {
                     return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        mapOf("error" to "invalid_body"),
+                        ApiError("invalid_body"),
                     )
                 }
                 val deviceCode = form["device_code"]?.takeIf { it.isNotBlank() }
                     ?: return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        mapOf("error" to "missing_device_code"),
+                        ApiError("missing_device_code"),
                     )
 
                 try {
@@ -74,7 +81,7 @@ fun Route.authRoutes(deviceClient: GitHubDeviceClient) {
                     log.warn("auth/device/poll upstream error: {}", e.message)
                     call.respond(
                         HttpStatusCode.BadGateway,
-                        mapOf("error" to "github_unreachable"),
+                        ApiError("github_unreachable"),
                     )
                 }
             }

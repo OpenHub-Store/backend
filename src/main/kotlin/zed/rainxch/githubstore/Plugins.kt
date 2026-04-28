@@ -18,8 +18,11 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.util.AttributeKey
 import io.sentry.Sentry
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
 import zed.rainxch.githubstore.routes.ADMIN_BASIC_AUTH
+import zed.rainxch.githubstore.util.ApiError
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 import kotlin.time.Duration.Companion.hours
@@ -38,6 +41,32 @@ fun Application.configureSerialization() {
 }
 
 private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
+private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9\\-]{1,64}$")
+
+// Reject oversized or unknown-size bodies before reading them.
+// Idiom at call sites: `if (!call.requireMaxBody(N)) return@post`.
+// Only effective when the client sends Content-Length — chunked transfer-
+// encoding bypasses this. Caddy's `request_body { max_size ... }` directive
+// handles the chunked path at the edge.
+internal suspend fun ApplicationCall.requireMaxBody(maxBytes: Long): Boolean {
+    val len = request.contentLength()
+    if (len == null || len > maxBytes) {
+        respond(HttpStatusCode.PayloadTooLarge, ApiError("payload_too_large"))
+        return false
+    }
+    return true
+}
+
+// Hoisted so all rate-limit buckets share one definition. A typo in any
+// inlined copy would silently degrade that bucket's key to "unknown",
+// collapsing every IP into one shared quota.
+private fun forwardedFor(call: io.ktor.server.application.ApplicationCall): String =
+    call.request.headers["X-Forwarded-For"]
+        ?.split(",")
+        ?.firstOrNull()
+        ?.trim()
+        .orEmpty()
+        .ifEmpty { "unknown" }
 
 fun Application.configureHTTP() {
     install(DefaultHeaders) {
@@ -49,7 +78,11 @@ fun Application.configureHTTP() {
     // present (useful when debugging a chain of services), otherwise
     // generates a short random hex.
     intercept(io.ktor.server.application.ApplicationCallPipeline.Plugins) {
-        val incoming = call.request.headers["X-Request-ID"]?.take(64)
+        // Whitelist alphanumerics and hyphen — anything else (control chars,
+        // newlines, ANSI escapes, HTML) could be echoed back into log lines
+        // and tail-aggregator output. Drop on any mismatch and fall through
+        // to a server-generated UUID.
+        val incoming = call.request.headers["X-Request-ID"]?.takeIf(REQUEST_ID_PATTERN::matches)
         val id = incoming ?: UUID.randomUUID().toString().substring(0, 12)
         call.attributes.put(REQUEST_ID_KEY, id)
         call.response.header("X-Request-ID", id)
@@ -101,64 +134,57 @@ fun Application.configureHTTP() {
         // path: any client could send `CF-Connecting-IP: <random>` and rotate
         // past the limiter at will. Same reasoning applies to every bucket
         // below.
+        //
+        // CDN vs direct-path note: on the CDN path Caddy sees the Gcore POP
+        // IP and every user behind that POP shares one bucket (limits there
+        // are best-effort). On api-direct.github-store.org the IP is real and
+        // these limits are the actual abuse floor — kept tight for that path.
         global {
             rateLimiter(limit = 120, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
-        // Events endpoint: stricter (30 per minute)
+        // Events endpoint: 3/min/IP (tightened 10× for direct-path abuse).
+        // 50 events/batch × 3 batches/min = 150 events/min/IP — comfortably
+        // covers any realistic session.
         register(RateLimitName("events")) {
-            rateLimiter(limit = 30, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            rateLimiter(limit = 3, refillPeriod = 1.minutes)
+            requestKey(::forwardedFor)
         }
         // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
         register(RateLimitName("search")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Badges: 60/min/IP. Embedded in READMEs so a single popular repo can
         // generate steady traffic; the limit is per-viewer-IP, not per-repo.
         register(RateLimitName("badges")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Telemetry: clients batch up to 100 events per POST, so volume per
-        // session is naturally low. 600/min/IP comfortably covers a chatty
-        // session yet still caps a misbehaving client at 60k events/min/IP.
+        // session is naturally low. 60/min/IP (tightened 10× for direct-path
+        // abuse) covers a chatty session yet still caps a misbehaving client
+        // at 6k events/min/IP.
         register(RateLimitName("telemetry")) {
-            rateLimiter(limit = 600, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
-            }
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            requestKey(::forwardedFor)
         }
-        // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
-        // keeps abuse impossible without blocking legitimate retries after a
-        // failed or cancelled flow.
+        // Auth device-flow start: low volume (one per login attempt). 1/hr/IP
+        // (tightened 10× for direct-path abuse). One legitimate login per hour
+        // per device is plenty; a NAT'd household burns this quickly but the
+        // direct path is the fallback, not the primary, so the tradeoff favors
+        // the abuse-floor over the rare retry.
         register(RateLimitName("auth-start")) {
-            rateLimiter(limit = 10, refillPeriod = 1.hours)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            rateLimiter(limit = 1, refillPeriod = 1.hours)
+            requestKey(::forwardedFor)
         }
         // Auth device-flow poll: a real flow is ~180 polls over 15min at 5s
-        // intervals, so 200/hr/IP fits one full flow plus a small margin.
+        // intervals, so the floor cannot drop below ~200 without breaking
+        // every login. Kept at 200/hr/IP — `auth-start` is the chokepoint for
+        // abuse, since you can't poll without a device_code from start.
         register(RateLimitName("auth-poll")) {
             rateLimiter(limit = 200, refillPeriod = 1.hours)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
     }
 
@@ -171,7 +197,13 @@ fun Application.configureHTTP() {
         basic(ADMIN_BASIC_AUTH) {
             realm = "github-store-admin"
             validate { creds ->
-                if (adminToken != null && creds.password == adminToken) {
+                // Constant-time compare so an attacker can't binary-search the
+                // token from the response-time delta of a `==` short-circuit.
+                if (adminToken != null && MessageDigest.isEqual(
+                        creds.password.toByteArray(StandardCharsets.UTF_8),
+                        adminToken.toByteArray(StandardCharsets.UTF_8),
+                    )
+                ) {
                     UserIdPrincipal(creds.name)
                 } else null
             }
@@ -209,10 +241,10 @@ fun Application.configureHTTP() {
             call.application.environment.log.info(
                 "Bad request (rid={}): {}", rid ?: "-", cause.javaClass.simpleName,
             )
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_request"))
+            call.respond(HttpStatusCode.BadRequest, ApiError("invalid_request"))
         }
         exception<NotFoundException> { call, _ ->
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "not_found"))
+            call.respond(HttpStatusCode.NotFound, ApiError("not_found"))
         }
         exception<Throwable> { call, cause ->
             val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
@@ -228,7 +260,7 @@ fun Application.configureHTTP() {
             }
             call.respond(
                 HttpStatusCode.InternalServerError,
-                mapOf("error" to "Internal server error")
+                ApiError("internal_error", message = "Internal server error"),
             )
         }
     }

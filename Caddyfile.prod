@@ -14,6 +14,12 @@ api.github-store.org {
     # reads the header either, but defense-in-depth: drop it at the edge.
     request_header -CF-Connecting-IP
 
+    # Belt-and-suspenders against bodies that bypass the app's
+    # Content-Length-based pre-check (chunked transfer-encoding).
+    request_body {
+        max_size 1MB
+    }
+
     reverse_proxy app:8080
 
     header {
@@ -48,6 +54,12 @@ api-direct.github-store.org {
     # Strip any client-supplied CF-Connecting-IP. See the rationale on the
     # primary site above — same attack surface, same fix.
     request_header -CF-Connecting-IP
+
+    # Belt-and-suspenders against bodies that bypass the app's
+    # Content-Length-based pre-check (chunked transfer-encoding).
+    request_body {
+        max_size 1MB
+    }
 
     reverse_proxy app:8080
 
