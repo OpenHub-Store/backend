@@ -63,6 +63,7 @@ object DatabaseFactory {
                 "V5__resource_cache.sql",
                 "V6__hash_device_id_drop_query_sample.sql",
                 "V7__telemetry_events.sql",
+                "V11__device_id_hmac_rehash.sql",
             )
             for (migration in migrations) {
                 val rawSql = this::class.java.classLoader
@@ -110,6 +111,18 @@ object DatabaseFactory {
     // so the operator can re-run after setting the env var. The migration is
     // designed to be idempotent: the column drop uses IF EXISTS and the rehash
     // skips rows that already look like 64-hex.
+    //
+    // QUOTING ASSUMPTION (read before writing a new migration that uses the pepper):
+    // This substitution assumes the pepper is used only inside `'...'` single-quoted
+    // SQL string literals (the escape rule is to double the single quotes, which we
+    // apply above). If a future migration uses the pepper inside `$$...$$`
+    // dollar-quoted blocks, `E'...'` extended-string literals, or `COPY` blocks,
+    // this substitution is UNSAFE -- the doubled-quote escape is wrong in those
+    // contexts and a pepper containing the right characters could break out of
+    // its quoting. The safe refactor at that point is to switch to
+    // `set_config('app.device_id_pepper', $1, false)` plus
+    // `current_setting('app.device_id_pepper')` with a real PreparedStatement bind
+    // for $1, instead of string substitution.
     private fun preprocessMigration(name: String, sql: String): String? {
         if (!sql.contains(":'device_id_pepper'")) return sql
         val pepper = System.getenv("DEVICE_ID_PEPPER")?.takeIf { it.isNotBlank() }
