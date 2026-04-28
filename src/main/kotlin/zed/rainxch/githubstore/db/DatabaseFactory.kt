@@ -63,6 +63,7 @@ object DatabaseFactory {
                 "V5__resource_cache.sql",
                 "V6__hash_device_id_drop_query_sample.sql",
                 "V7__telemetry_events.sql",
+                "V9__events_indexes_and_repos_indexed_at.sql",
             )
             for (migration in migrations) {
                 val rawSql = this::class.java.classLoader
