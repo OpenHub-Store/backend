@@ -161,7 +161,7 @@ class SignalAggregationWorker(
                 SELECT
                     r.id,
                     r.stars,
-                    EXTRACT(EPOCH FROM (NOW() - r.latest_release_date)) / 86400.0 AS days_since_release
+                    GREATEST(EXTRACT(EPOCH FROM (NOW() - r.latest_release_date)) / 86400.0, 0) AS days_since_release
                 FROM repos r
                 """.trimIndent()
             ).use { ps ->

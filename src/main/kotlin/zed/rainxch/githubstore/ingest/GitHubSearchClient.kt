@@ -447,9 +447,7 @@ class GitHubSearchClient(
                 // SignalAggregationWorker cycle. On re-ingest, preserve the
                 // worker's refined score — otherwise upsert would wipe it
                 // back to the cold-start value on every passthrough hit.
-                val daysSinceRelease = releaseDate?.let {
-                    ChronoUnit.DAYS.between(it.toInstant(), Instant.now()).toDouble().coerceAtLeast(0.0)
-                }
+                val daysSinceRelease = SearchScore.daysSinceRelease(releaseDate?.toInstant())
                 val existingScore: Float? = Repos
                     .select(Repos.searchScore)
                     .where { Repos.id eq repo.id }
