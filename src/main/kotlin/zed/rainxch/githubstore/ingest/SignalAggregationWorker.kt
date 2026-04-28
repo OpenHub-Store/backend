@@ -33,6 +33,7 @@ import kotlin.time.Duration.Companion.seconds
  */
 class SignalAggregationWorker(
     private val meilisearchClient: MeilisearchClient,
+    private val supervisor: WorkerSupervisor? = null,
 ) {
     private val log = LoggerFactory.getLogger(SignalAggregationWorker::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -42,16 +43,60 @@ class SignalAggregationWorker(
     private val meiliBatchSize = 200
     private val signalWindowDays = 30L
 
+    // Each worker picks a unique constant in the 911000-block. The number is
+    // arbitrary — pg_try_advisory_lock just needs the same value to mean the
+    // same lock across replicas. Using a 911-prefix keeps these visually
+    // distinct from any other advisory locks the application or Postgres
+    // extensions might use.
+    private val advisoryLockId: Long = 911_001L
+
     fun start(): Job = scope.launch {
         delay(startupDelay)
         while (true) {
             try {
-                runCycle()
+                if (tryRunCycle()) {
+                    supervisor?.recordTick(WORKER_NAME)
+                }
             } catch (e: Exception) {
                 log.error("Signal aggregation cycle failed", e)
                 Sentry.captureException(e)
             }
             delay(cycleInterval)
+        }
+    }.also { supervisor?.register(WORKER_NAME, it) }
+
+    private suspend fun tryRunCycle(): Boolean {
+        if (!acquireAdvisoryLock()) {
+            log.info("SignalAggregation skipped: advisory lock held by another instance")
+            return false
+        }
+        try {
+            runCycle()
+            return true
+        } finally {
+            releaseAdvisoryLock()
+        }
+    }
+
+    private fun acquireAdvisoryLock(): Boolean = transaction {
+        val conn = TransactionManager.current().connection.connection as java.sql.Connection
+        conn.prepareStatement("SELECT pg_try_advisory_lock(?)").use { ps ->
+            ps.setLong(1, advisoryLockId)
+            ps.executeQuery().use { rs -> rs.next() && rs.getBoolean(1) }
+        }
+    }
+
+    private fun releaseAdvisoryLock() {
+        try {
+            transaction {
+                val conn = TransactionManager.current().connection.connection as java.sql.Connection
+                conn.prepareStatement("SELECT pg_advisory_unlock(?)").use { ps ->
+                    ps.setLong(1, advisoryLockId)
+                    ps.executeQuery().close()
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to release advisory lock {}: {}", advisoryLockId, e.message)
         }
     }
 
@@ -223,4 +268,8 @@ class SignalAggregationWorker(
     )
 
     private data class ScoredRepo(val id: Long, val score: Double)
+
+    companion object {
+        const val WORKER_NAME = "signal_aggregation"
+    }
 }
