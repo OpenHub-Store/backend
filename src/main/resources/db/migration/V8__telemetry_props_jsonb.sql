@@ -9,10 +9,14 @@
 -- TelemetryRepository which encodes via kotlinx Json (always valid JSON), or
 -- defaulted to '{}' at the column level.
 --
--- Idempotent via DO block: a second run is a no-op because Postgres errors
--- on TYPE-changes when source and target types match, and the IGNORABLE
--- list in DatabaseFactory does not cover that error.
-
+-- Idempotent via DO block: the IF check skips the entire ALTER chain once
+-- props is already JSONB.
+--
+-- DROP DEFAULT before TYPE: Postgres won't auto-cast the existing default
+-- expression text->jsonb. Without the explicit drop, the ALTER fails with
+-- "default for column 'props' cannot be cast automatically to type jsonb"
+-- and the whole runMigrations() transaction silently rolls back. Order
+-- matters: DROP DEFAULT, then TYPE, then SET DEFAULT with the new literal.
 DO $$
 BEGIN
     IF EXISTS (
@@ -22,6 +26,8 @@ BEGIN
           AND column_name = 'props'
           AND data_type = 'text'
     ) THEN
+        ALTER TABLE telemetry_events
+            ALTER COLUMN props DROP DEFAULT;
         ALTER TABLE telemetry_events
             ALTER COLUMN props TYPE JSONB USING props::jsonb;
         ALTER TABLE telemetry_events
