@@ -1,7 +1,5 @@
 package zed.rainxch.githubstore.badge
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
@@ -109,8 +107,8 @@ class BadgeService(
         return "$labelOverride $value"
     }
 
-    private suspend fun repoStars(owner: String, name: String): Pair<Long, Boolean> = withContext(Dispatchers.IO) {
-        try {
+    private suspend fun repoStars(owner: String, name: String): Pair<Long, Boolean> {
+        return try {
             val repo = repoRepository.findByOwnerAndName(owner, name)
             if (repo == null) 0L to true else repo.stargazersCount.toLong() to false
         } catch (e: Exception) {
@@ -119,8 +117,8 @@ class BadgeService(
         }
     }
 
-    private suspend fun repoDownloadCount(owner: String, name: String): Pair<Long, Boolean> = withContext(Dispatchers.IO) {
-        try {
+    private suspend fun repoDownloadCount(owner: String, name: String): Pair<Long, Boolean> {
+        return try {
             val repo = repoRepository.findByOwnerAndName(owner, name)
             if (repo == null) 0L to true else repo.downloadCount to false
         } catch (e: Exception) {
@@ -130,14 +128,10 @@ class BadgeService(
     }
 
     private suspend fun repoLatestReleaseTag(owner: String, name: String): Pair<String, Boolean> {
-        // Fast path: DB. Lookup runs on Dispatchers.IO so the blocking JDBC
-        // call doesn't pin a Ktor request worker.
-        val fromDb = withContext(Dispatchers.IO) {
-            try {
-                repoRepository.findByOwnerAndName(owner, name)?.latestReleaseTag
-            } catch (e: Exception) {
-                log.warn("DB release lookup failed: {}", e.message); null
-            }
+        val fromDb = try {
+            repoRepository.findByOwnerAndName(owner, name)?.latestReleaseTag
+        } catch (e: Exception) {
+            log.warn("DB release lookup failed: {}", e.message); null
         }
         if (!fromDb.isNullOrBlank()) return fromDb to false
 
