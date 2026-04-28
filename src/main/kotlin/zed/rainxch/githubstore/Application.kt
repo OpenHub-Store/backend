@@ -9,7 +9,6 @@ import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
 import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
-import zed.rainxch.githubstore.ingest.SearchMissWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.routes.configureRouting
 
@@ -60,9 +59,6 @@ fun Application.module() {
     configureRouting()
 
     // Start background workers after routing is configured
-    val searchMissWorker by inject<SearchMissWorker>()
-    searchMissWorker.start()
-
     val signalAggregationWorker by inject<SignalAggregationWorker>()
     signalAggregationWorker.start()
 

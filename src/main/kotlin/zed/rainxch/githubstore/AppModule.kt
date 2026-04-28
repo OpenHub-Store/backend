@@ -11,7 +11,6 @@ import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
-import zed.rainxch.githubstore.ingest.SearchMissWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
@@ -28,7 +27,6 @@ val appModule = module {
     single { GitHubSearchClient(get()) }
     single { GitHubDeviceClient() }
     single { GitHubResourceClient(get()) }
-    single { SearchMissWorker(get(), get()) }
     single { SignalAggregationWorker(get()) }
     single { RepoRefreshWorker(get()) }
     single { SearchMetricsRegistry() }
