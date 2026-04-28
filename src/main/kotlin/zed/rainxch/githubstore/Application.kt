@@ -9,8 +9,9 @@ import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
 import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
-import zed.rainxch.githubstore.ingest.SearchMissWorker
+import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
+import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.routes.configureRouting
 
 fun main() {
@@ -74,14 +75,19 @@ fun Application.module() {
     configureRouting()
 
     // Start background workers after routing is configured
-    val searchMissWorker by inject<SearchMissWorker>()
-    searchMissWorker.start()
-
     val signalAggregationWorker by inject<SignalAggregationWorker>()
     signalAggregationWorker.start()
 
     val repoRefreshWorker by inject<RepoRefreshWorker>()
     repoRefreshWorker.start()
+
+    val retentionWorker by inject<RetentionWorker>()
+    retentionWorker.start()
+
+    val workerSupervisor by inject<WorkerSupervisor>()
+    monitor.subscribe(ApplicationStopping) {
+        workerSupervisor.cancelAll()
+    }
 }
 
 // Strip long single-quoted spans (commonly the user-input value JDBC and

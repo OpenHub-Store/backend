@@ -11,8 +11,9 @@ import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
-import zed.rainxch.githubstore.ingest.SearchMissWorker
+import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
+import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.badge.FdroidVersionClient
@@ -28,9 +29,10 @@ val appModule = module {
     single { GitHubSearchClient(get()) }
     single { GitHubDeviceClient() }
     single { GitHubResourceClient(get()) }
-    single { SearchMissWorker(get(), get()) }
-    single { SignalAggregationWorker(get()) }
-    single { RepoRefreshWorker(get()) }
+    single { WorkerSupervisor() }
+    single { SignalAggregationWorker(get(), get()) }
+    single { RepoRefreshWorker(get(), get()) }
+    single { RetentionWorker(get()) }
     single { SearchMetricsRegistry() }
     single { FdroidVersionClient(packageId = "zed.rainxch.githubstore") }
     single { BadgeService(repoRepository = get(), resourceClient = get(), fdroidClient = get()) }

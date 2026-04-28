@@ -1,11 +1,6 @@
 package zed.rainxch.githubstore.db
 
-import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
-import org.jetbrains.exposed.sql.or
-import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.upsert
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -33,33 +28,6 @@ class SearchMissRepository {
         }
     }
 
-    fun topUnprocessed(limit: Int = 10): List<MissEntry> = transaction {
-        val cutoff = OffsetDateTime.now().minusDays(7)
-        SearchMisses
-            .selectAll()
-            .where {
-                SearchMisses.lastProcessedAt.isNull() or
-                    (SearchMisses.lastProcessedAt less cutoff)
-            }
-            .orderBy(SearchMisses.missCount to SortOrder.DESC)
-            .limit(limit)
-            .map {
-                MissEntry(
-                    queryHash = it[SearchMisses.queryHash],
-                    querySample = "",
-                    missCount = it[SearchMisses.missCount],
-                )
-            }
-    }
-
-    fun markProcessed(queryHash: String) {
-        transaction {
-            SearchMisses.update({ SearchMisses.queryHash eq queryHash }) {
-                it[lastProcessedAt] = OffsetDateTime.now()
-            }
-        }
-    }
-
     private fun sha256(input: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
         return bytes.joinToString("") { "%02x".format(it) }.take(16)
@@ -79,10 +47,4 @@ class SearchMissRepository {
             return stripped.trim().replace(Regex("\\s+"), " ")
         }
     }
-
-    data class MissEntry(
-        val queryHash: String,
-        val querySample: String,
-        val missCount: Int,
-    )
 }

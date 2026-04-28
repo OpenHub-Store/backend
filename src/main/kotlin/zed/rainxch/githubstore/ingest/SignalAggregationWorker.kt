@@ -33,6 +33,7 @@ import kotlin.time.Duration.Companion.seconds
  */
 class SignalAggregationWorker(
     private val meilisearchClient: MeilisearchClient,
+    private val supervisor: WorkerSupervisor? = null,
 ) {
     private val log = LoggerFactory.getLogger(SignalAggregationWorker::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -41,17 +42,68 @@ class SignalAggregationWorker(
     private val startupDelay = 45.seconds
     private val meiliBatchSize = 200
     private val signalWindowDays = 30L
+    // Chunk size for the per-repo score recompute. The previous "select all
+    // + one batch UPDATE" form held row locks on every row in `repos` while
+    // GitHubSearchClient.ingestToPostgres was trying to upsert into the same
+    // table. 1000 keeps each transaction short enough that an upsert never
+    // waits more than a few ms, while still amortising the per-transaction
+    // overhead across enough rows to finish a 30k-repo cycle in seconds.
+    private val chunkSize = 1_000
+
+    // Each worker picks a unique constant in the 911000-block. The number is
+    // arbitrary — pg_try_advisory_lock just needs the same value to mean the
+    // same lock across replicas. Using a 911-prefix keeps these visually
+    // distinct from any other advisory locks the application or Postgres
+    // extensions might use.
+    private val advisoryLockId: Long = 911_001L
 
     fun start(): Job = scope.launch {
         delay(startupDelay)
         while (true) {
             try {
-                runCycle()
+                if (tryRunCycle()) {
+                    supervisor?.recordTick(WORKER_NAME)
+                }
             } catch (e: Exception) {
                 log.error("Signal aggregation cycle failed", e)
                 Sentry.captureException(e)
             }
             delay(cycleInterval)
+        }
+    }.also { supervisor?.register(WORKER_NAME, it) }
+
+    private suspend fun tryRunCycle(): Boolean {
+        if (!acquireAdvisoryLock()) {
+            log.info("SignalAggregation skipped: advisory lock held by another instance")
+            return false
+        }
+        try {
+            runCycle()
+            return true
+        } finally {
+            releaseAdvisoryLock()
+        }
+    }
+
+    private fun acquireAdvisoryLock(): Boolean = transaction {
+        val conn = TransactionManager.current().connection.connection as java.sql.Connection
+        conn.prepareStatement("SELECT pg_try_advisory_lock(?)").use { ps ->
+            ps.setLong(1, advisoryLockId)
+            ps.executeQuery().use { rs -> rs.next() && rs.getBoolean(1) }
+        }
+    }
+
+    private fun releaseAdvisoryLock() {
+        try {
+            transaction {
+                val conn = TransactionManager.current().connection.connection as java.sql.Connection
+                conn.prepareStatement("SELECT pg_advisory_unlock(?)").use { ps ->
+                    ps.setLong(1, advisoryLockId)
+                    ps.executeQuery().close()
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to release advisory lock {}: {}", advisoryLockId, e.message)
         }
     }
 
@@ -153,35 +205,58 @@ class SignalAggregationWorker(
 
     private fun computeSearchScores(signals: Map<Long, SignalRow>): List<ScoredRepo> {
         val scored = mutableListOf<ScoredRepo>()
-        transaction {
-            val conn = TransactionManager.current().connection.connection as java.sql.Connection
-            // Left-join every repo with its aggregate; unscored repos still get a baseline.
-            conn.prepareStatement(
-                """
-                SELECT
-                    r.id,
-                    r.stars,
-                    EXTRACT(EPOCH FROM (NOW() - r.latest_release_date)) / 86400.0 AS days_since_release
-                FROM repos r
-                """.trimIndent()
-            ).use { ps ->
-                ps.executeQuery().use { rs ->
-                    while (rs.next()) {
-                        val id = rs.getLong("id")
-                        val stars = rs.getInt("stars")
-                        val daysRaw = rs.getObject("days_since_release") as? Number
-                        val days = daysRaw?.toDouble()
-                        val sig = signals[id]
-                        val ctr = sig?.let { laplaceCtr(it.clicks, it.views) } ?: 0f
-                        val installRate = sig?.let { laplaceInstallRate(it.installsSuccess, it.installsFailed) } ?: 0f
-                        val score = SearchScore.compute(stars, ctr.toDouble(), installRate.toDouble(), days)
-                        scored.add(ScoredRepo(id, score))
-                    }
+        var offset = 0
+        while (true) {
+            val chunk = readChunk(offset)
+            if (chunk.isEmpty()) break
+            val chunkScored = chunk.map { row ->
+                val sig = signals[row.id]
+                val ctr = sig?.let { laplaceCtr(it.clicks, it.views) } ?: 0f
+                val installRate = sig?.let { laplaceInstallRate(it.installsSuccess, it.installsFailed) } ?: 0f
+                ScoredRepo(row.id, SearchScore.compute(row.stars, ctr.toDouble(), installRate.toDouble(), row.days))
+            }
+            writeChunkScores(chunkScored)
+            scored.addAll(chunkScored)
+            if (chunk.size < chunkSize) break
+            offset += chunkSize
+        }
+        return scored
+    }
+
+    private fun readChunk(offset: Int): List<RepoRow> = transaction {
+        val conn = TransactionManager.current().connection.connection as java.sql.Connection
+        val out = mutableListOf<RepoRow>()
+        conn.prepareStatement(
+            """
+            SELECT
+                r.id,
+                r.stars,
+                GREATEST(EXTRACT(EPOCH FROM (NOW() - r.latest_release_date)) / 86400.0, 0) AS days_since_release
+            FROM repos r
+            ORDER BY r.id
+            LIMIT ? OFFSET ?
+            """.trimIndent()
+        ).use { ps ->
+            ps.setInt(1, chunkSize)
+            ps.setInt(2, offset)
+            ps.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val id = rs.getLong("id")
+                    val stars = rs.getInt("stars")
+                    val daysRaw = rs.getObject("days_since_release") as? Number
+                    out.add(RepoRow(id, stars, daysRaw?.toDouble()))
                 }
             }
+        }
+        out
+    }
 
+    private fun writeChunkScores(chunk: List<ScoredRepo>) {
+        if (chunk.isEmpty()) return
+        transaction {
+            val conn = TransactionManager.current().connection.connection as java.sql.Connection
             conn.prepareStatement("UPDATE repos SET search_score = ? WHERE id = ?").use { ps ->
-                for (s in scored) {
+                for (s in chunk) {
                     ps.setFloat(1, s.score.toFloat())
                     ps.setLong(2, s.id)
                     ps.addBatch()
@@ -189,7 +264,6 @@ class SignalAggregationWorker(
                 ps.executeBatch()
             }
         }
-        return scored
     }
 
     private suspend fun pushToMeilisearch(scores: List<ScoredRepo>) {
@@ -223,4 +297,10 @@ class SignalAggregationWorker(
     )
 
     private data class ScoredRepo(val id: Long, val score: Double)
+
+    private data class RepoRow(val id: Long, val stars: Int, val days: Double?)
+
+    companion object {
+        const val WORKER_NAME = "signal_aggregation"
+    }
 }

@@ -24,7 +24,12 @@ object DatabaseFactory {
             jdbcUrl = env("DATABASE_URL", "jdbc:postgresql://localhost:5432/githubstore")
             username = env("DATABASE_USER", "githubstore")
             password = env("DATABASE_PASSWORD", "githubstore")
-            maximumPoolSize = env("DATABASE_POOL_SIZE", "20").toInt()
+            // 12 fits the PgTune-shaped "2 × cores + spindles ≈ 10" rule on
+            // a 4-vCPU box that also runs Postgres + Meili. The downstream
+            // coldQueryGate(8) and persistenceGate(4) already cap fan-out, so
+            // 20 was just letting bursts pile up connections that Postgres
+            // couldn't usefully parallelise. Override via DATABASE_POOL_SIZE.
+            maximumPoolSize = env("DATABASE_POOL_SIZE", "12").toInt()
             isAutoCommit = false
             connectionTimeout = 5_000
             validationTimeout = 3_000
@@ -63,6 +68,7 @@ object DatabaseFactory {
                 "V5__resource_cache.sql",
                 "V6__hash_device_id_drop_query_sample.sql",
                 "V7__telemetry_events.sql",
+                "V9__events_indexes_and_repos_indexed_at.sql",
                 "V11__device_id_hmac_rehash.sql",
             )
             for (migration in migrations) {

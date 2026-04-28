@@ -8,6 +8,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.sentry.Sentry
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -164,46 +165,62 @@ class GitHubSearchClient(
     /**
      * Search GitHub for repos matching the query, check for installer releases,
      * ingest into Postgres + Meilisearch, and return the results.
+     *
+     * Transitional: this returns just the hits list for backward compatibility
+     * with the existing SearchRoutes caller. New callers should use
+     * `searchAndIngestOutcome` so they can distinguish "GitHub had no matches"
+     * from "upstream failed". The route migration happens in a follow-up.
      */
     suspend fun searchAndIngest(
         query: String,
         platform: String?,
         limit: Int = 10,
         userToken: String? = null,
-    ): List<RepoResponse> {
-        try {
-            if (queryIsBlocked(query)) return emptyList()
-            if (FeatureFlags.disableLiveGitHubPassthrough) {
-                log.info("Live GitHub passthrough disabled; skipping query={}", queryHash(query))
-                return emptyList()
-            }
+    ): List<RepoResponse> = when (val outcome = searchAndIngestOutcome(query, platform, limit, userToken)) {
+        is SearchOutcome.Hits -> outcome.results
+        SearchOutcome.NoMatches -> emptyList()
+        is SearchOutcome.UpstreamFailed -> emptyList()
+    }
 
-            return coldQueryGate.withPermit {
-            val token = userToken ?: pickFallbackToken()
-            var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
-            // When the stars-sorted pass yields nothing installable, try an
-            // in:name pass. Lets genuinely niche literal-name matches (e.g. a
-            // 12-star app whose repo IS the query) surface past the library
-            // projects that dominate general best-match rankings.
-            if (withInstallers.isEmpty()) {
-                withInstallers = runPass(query, platform, limit, token, nameMatch = true)
-            }
-            if (withInstallers.isEmpty()) return@withPermit emptyList()
+    suspend fun searchAndIngestOutcome(
+        query: String,
+        platform: String?,
+        limit: Int = 10,
+        userToken: String? = null,
+    ): SearchOutcome {
+        if (queryIsBlocked(query)) return SearchOutcome.NoMatches
+        if (FeatureFlags.disableLiveGitHubPassthrough) {
+            log.info("Live GitHub passthrough disabled; skipping query={}", queryHash(query))
+            return SearchOutcome.NoMatches
+        }
 
-            // Persist asynchronously — the response doesn't wait for Postgres/Meili.
-            persistenceScope.launch {
-                persistenceGate.withPermit {
-                    val scoredByRepoId = ingestToPostgres(withInstallers)
-                    syncToMeilisearch(withInstallers, scoredByRepoId)
-                    log.info("On-demand ingest: {} repos for query={}", withInstallers.size, queryHash(query))
+        return try {
+            coldQueryGate.withPermit {
+                val token = userToken ?: pickFallbackToken()
+                var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
+                // When the stars-sorted pass yields nothing installable, try an
+                // in:name pass. Lets genuinely niche literal-name matches (e.g. a
+                // 12-star app whose repo IS the query) surface past the library
+                // projects that dominate general best-match rankings.
+                if (withInstallers.isEmpty()) {
+                    withInstallers = runPass(query, platform, limit, token, nameMatch = true)
                 }
-            }
+                if (withInstallers.isEmpty()) return@withPermit SearchOutcome.NoMatches
 
-            withInstallers.map { it.toRepoResponse() }
+                persistenceScope.launch {
+                    persistenceGate.withPermit {
+                        val scoredByRepoId = ingestToPostgres(withInstallers)
+                        syncToMeilisearch(withInstallers, scoredByRepoId)
+                        log.info("On-demand ingest: {} repos for query={}", withInstallers.size, queryHash(query))
+                    }
+                }
+
+                SearchOutcome.Hits(withInstallers.map { it.toRepoResponse() })
             }
         } catch (e: Exception) {
             log.warn("GitHub search passthrough failed for query={}: {}", queryHash(query), e.message)
-            return emptyList()
+            Sentry.captureException(e)
+            SearchOutcome.UpstreamFailed(reason = e.message ?: e::class.java.simpleName, cause = e)
         }
     }
 
@@ -447,9 +464,7 @@ class GitHubSearchClient(
                 // SignalAggregationWorker cycle. On re-ingest, preserve the
                 // worker's refined score — otherwise upsert would wipe it
                 // back to the cold-start value on every passthrough hit.
-                val daysSinceRelease = releaseDate?.let {
-                    ChronoUnit.DAYS.between(it.toInstant(), Instant.now()).toDouble().coerceAtLeast(0.0)
-                }
+                val daysSinceRelease = SearchScore.daysSinceRelease(releaseDate?.toInstant())
                 val existingScore: Float? = Repos
                     .select(Repos.searchScore)
                     .where { Repos.id eq repo.id }
@@ -571,6 +586,17 @@ class GitHubSearchClient(
 }
 
 // GitHub API DTOs
+
+// Canonical result type for `searchAndIngestOutcome`. The legacy
+// `searchAndIngest(): List<RepoResponse>` collapses NoMatches and
+// UpstreamFailed into the same empty list — fine for the current
+// SearchRoutes shape, but the route refactor will switch over so
+// passthroughAttempted / fallback semantics can distinguish the cases.
+sealed interface SearchOutcome {
+    data class Hits(val results: List<RepoResponse>) : SearchOutcome
+    data object NoMatches : SearchOutcome
+    data class UpstreamFailed(val reason: String, val cause: Throwable?) : SearchOutcome
+}
 
 data class ExploreResult(
     val items: List<RepoResponse>,
