@@ -115,6 +115,17 @@ object SearchMisses : Table("search_misses") {
     override val primaryKey = PrimaryKey(queryHash)
 }
 
+object SigningFingerprints : Table("signing_fingerprint") {
+    val fingerprint = text("fingerprint")
+    val owner = text("owner")
+    val repo = text("repo")
+    // Epoch milliseconds. The client's contract on /v1/signing-seeds requires
+    // ms not seconds — mixing units silently corrupts the incremental cursor.
+    val observedAt = long("observed_at")
+
+    override val primaryKey = PrimaryKey(fingerprint, owner, repo)
+}
+
 object RepoSignals : Table("repo_signals") {
     val repoId = long("repo_id").references(Repos.id)
     val clickCount30d = integer("click_count_30d").default(0)
