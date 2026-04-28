@@ -38,6 +38,7 @@ fun Application.configureSerialization() {
 }
 
 private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
+private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9\\-]{1,64}$")
 
 // Hoisted so all rate-limit buckets share one definition. A typo in any
 // inlined copy would silently degrade that bucket's key to "unknown",
@@ -60,7 +61,11 @@ fun Application.configureHTTP() {
     // present (useful when debugging a chain of services), otherwise
     // generates a short random hex.
     intercept(io.ktor.server.application.ApplicationCallPipeline.Plugins) {
-        val incoming = call.request.headers["X-Request-ID"]?.take(64)
+        // Whitelist alphanumerics and hyphen — anything else (control chars,
+        // newlines, ANSI escapes, HTML) could be echoed back into log lines
+        // and tail-aggregator output. Drop on any mismatch and fall through
+        // to a server-generated UUID.
+        val incoming = call.request.headers["X-Request-ID"]?.takeIf(REQUEST_ID_PATTERN::matches)
         val id = incoming ?: UUID.randomUUID().toString().substring(0, 12)
         call.attributes.put(REQUEST_ID_KEY, id)
         call.response.header("X-Request-ID", id)
