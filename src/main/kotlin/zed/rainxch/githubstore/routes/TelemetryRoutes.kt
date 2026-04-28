@@ -16,9 +16,22 @@ private const val MAX_SESSION_ID_LEN = 128
 private const val MAX_PLATFORM_LEN = 32
 private const val MAX_APP_VERSION_LEN = 32
 private const val MAX_NAME_LEN = 64
+private const val MAX_BODY_BYTES = 256 * 1024L
 
 fun Route.telemetryRoutes(queue: TelemetryQueue) {
     post("/telemetry/events") {
+        // Pre-check before receive() so a megabyte body never gets buffered into
+        // the JVM heap. Missing Content-Length is treated as oversized — we don't
+        // accept chunked uploads for telemetry.
+        val contentLength = call.request.contentLength()
+        if (contentLength == null || contentLength > MAX_BODY_BYTES) {
+            call.respond(
+                HttpStatusCode.PayloadTooLarge,
+                mapOf("error" to "payload_too_large"),
+            )
+            return@post
+        }
+
         val body = call.receive<TelemetryBatchRequest>()
 
         if (body.events.isEmpty()) {
@@ -28,7 +41,15 @@ fun Route.telemetryRoutes(queue: TelemetryQueue) {
         if (body.events.size > MAX_BATCH_SIZE) {
             call.respond(
                 HttpStatusCode.BadRequest,
-                mapOf("error" to "max $MAX_BATCH_SIZE events per batch"),
+                mapOf("error" to "batch_too_large"),
+            )
+            return@post
+        }
+
+        if (body.events.any { it.name.isBlank() }) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "invalid_event_name"),
             )
             return@post
         }
@@ -45,7 +66,7 @@ fun Route.telemetryRoutes(queue: TelemetryQueue) {
         if (oversized != null) {
             call.respond(
                 HttpStatusCode.BadRequest,
-                mapOf("error" to "field too long"),
+                mapOf("error" to "field_too_long"),
             )
             return@post
         }
