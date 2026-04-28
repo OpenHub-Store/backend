@@ -11,6 +11,8 @@ import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 private const val BASIC_AUTH_REALM = "github-store-admin"
 const val ADMIN_BASIC_AUTH = "admin-basic"
@@ -89,7 +91,12 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
 private fun authorized(call: io.ktor.server.application.ApplicationCall, adminToken: String?): Boolean {
     if (adminToken == null) return true
     val header = call.request.headers["X-Admin-Token"]
-    if (header == adminToken) return true
+    // Constant-time compare to defang token-length / per-byte timing oracles.
+    // MessageDigest.isEqual NPEs on null inputs, so guard first.
+    if (header != null && MessageDigest.isEqual(
+            header.toByteArray(StandardCharsets.UTF_8),
+            adminToken.toByteArray(StandardCharsets.UTF_8),
+        )) return true
     val principal = call.principal<UserIdPrincipal>()
     return principal != null
 }
