@@ -7,12 +7,13 @@ import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.transaction
+import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 
 private const val BASIC_AUTH_REALM = "github-store-admin"
 const val ADMIN_BASIC_AUTH = "admin-basic"
 
-fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
+fun Route.internalRoutes(metrics: SearchMetricsRegistry, workerSupervisor: WorkerSupervisor) {
     val adminToken: String? = System.getenv("ADMIN_TOKEN")?.takeIf { it.isNotBlank() }
     val isProduction = System.getenv("APP_ENV") == "production"
 
@@ -55,7 +56,13 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry) {
                 )
                 val db = fetchDbMetrics()
                 val top = fetchTopRepos()
-                call.respond(MetricsResponse(counters = counters, training = db, topRepos = top))
+                val workers = workerSupervisor.lastTicks().mapValues { it.value.toString() }
+                call.respond(MetricsResponse(
+                    counters = counters,
+                    training = db,
+                    topRepos = top,
+                    workers = workers,
+                ))
             }
         }
 
@@ -230,6 +237,7 @@ data class MetricsResponse(
     val counters: SearchCounters,
     val training: TrainingMetrics,
     val topRepos: TopRepos = TopRepos(),
+    val workers: Map<String, String> = emptyMap(),
 )
 
 @Serializable

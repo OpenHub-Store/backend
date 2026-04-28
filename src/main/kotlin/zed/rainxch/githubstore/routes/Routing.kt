@@ -12,6 +12,7 @@ import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.telemetry.TelemetryRepository
@@ -28,6 +29,7 @@ fun Application.configureRouting() {
     val searchMetrics by inject<SearchMetricsRegistry>()
     val badgeService by inject<BadgeService>()
     val telemetryRepository by inject<TelemetryRepository>()
+    val workerSupervisor by inject<WorkerSupervisor>()
 
     routing {
         route("/v1") {
@@ -48,7 +50,7 @@ fun Application.configureRouting() {
                 userRoutes(resourceClient)
             }
             authRoutes(deviceClient)
-            internalRoutes(searchMetrics)
+            internalRoutes(searchMetrics, workerSupervisor)
             rateLimit(RateLimitName("badges")) {
                 badgeRoutes(badgeService)
             }
