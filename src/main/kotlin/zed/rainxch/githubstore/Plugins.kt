@@ -39,6 +39,17 @@ fun Application.configureSerialization() {
 
 private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
 
+// Hoisted so all rate-limit buckets share one definition. A typo in any
+// inlined copy would silently degrade that bucket's key to "unknown",
+// collapsing every IP into one shared quota.
+private fun forwardedFor(call: io.ktor.server.application.ApplicationCall): String =
+    call.request.headers["X-Forwarded-For"]
+        ?.split(",")
+        ?.firstOrNull()
+        ?.trim()
+        .orEmpty()
+        .ifEmpty { "unknown" }
+
 fun Application.configureHTTP() {
     install(DefaultHeaders) {
         header("X-Engine", "github-store-backend")
@@ -103,62 +114,43 @@ fun Application.configureHTTP() {
         // below.
         global {
             rateLimiter(limit = 120, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Events endpoint: stricter (30 per minute)
         register(RateLimitName("events")) {
             rateLimiter(limit = 30, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
         register(RateLimitName("search")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Badges: 60/min/IP. Embedded in READMEs so a single popular repo can
         // generate steady traffic; the limit is per-viewer-IP, not per-repo.
         register(RateLimitName("badges")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Telemetry: clients batch up to 100 events per POST, so volume per
         // session is naturally low. 600/min/IP comfortably covers a chatty
         // session yet still caps a misbehaving client at 60k events/min/IP.
         register(RateLimitName("telemetry")) {
             rateLimiter(limit = 600, refillPeriod = 1.minutes)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim() ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
         // keeps abuse impossible without blocking legitimate retries after a
         // failed or cancelled flow.
         register(RateLimitName("auth-start")) {
             rateLimiter(limit = 10, refillPeriod = 1.hours)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
         // Auth device-flow poll: a real flow is ~180 polls over 15min at 5s
         // intervals, so 200/hr/IP fits one full flow plus a small margin.
         register(RateLimitName("auth-poll")) {
             rateLimiter(limit = 200, refillPeriod = 1.hours)
-            requestKey { call ->
-                call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                    ?: "unknown"
-            }
+            requestKey(::forwardedFor)
         }
     }
 
