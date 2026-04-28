@@ -94,7 +94,8 @@ class TelemetryRouteTest {
             setBody(body)
         }
 
-        assertEquals(HttpStatusCode.NoContent, response.status)
+        // T7: dropped > 0 surfaces as 200 with counts so clients can detect drift.
+        assertEquals(HttpStatusCode.OK, response.status)
         // 5 submitted; user_email_collected + install_started + install_succeeded
         // are not in the allowlist → only search_executed and crash persist.
         assertEquals(2, repo.inserted.size)
@@ -152,7 +153,7 @@ class TelemetryRouteTest {
     }
 
     @Test
-    fun `every event in a batch where all are non-allowlisted yields 204 with zero inserts`() = testApplication {
+    fun `every event in a batch where all are non-allowlisted yields 200 with zero inserts`() = testApplication {
         val repo = FakeRepo()
         val queue = FakeQueue(repo)
         installPlugins()
@@ -164,9 +165,8 @@ class TelemetryRouteTest {
             setBody(body)
         }
 
-        // Drop-on-floor with no error response. Client thinks it succeeded;
-        // operator sees the drop-rate metric and notices schema drift.
-        assertEquals(HttpStatusCode.NoContent, response.status)
+        // Drop-on-floor with 200 + counts so the client can graph schema drift.
+        assertEquals(HttpStatusCode.OK, response.status)
         assertTrue(repo.inserted.isEmpty())
     }
 }
