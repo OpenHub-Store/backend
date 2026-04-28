@@ -7,7 +7,7 @@ import io.ktor.server.routing.*
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.telemetry.TelemetryAllowlist
 import zed.rainxch.githubstore.telemetry.TelemetryBatchRequest
-import zed.rainxch.githubstore.telemetry.TelemetryRepository
+import zed.rainxch.githubstore.telemetry.TelemetryQueue
 
 private val log = LoggerFactory.getLogger("TelemetryRoutes")
 
@@ -17,7 +17,7 @@ private const val MAX_PLATFORM_LEN = 32
 private const val MAX_APP_VERSION_LEN = 32
 private const val MAX_NAME_LEN = 64
 
-fun Route.telemetryRoutes(repository: TelemetryRepository) {
+fun Route.telemetryRoutes(queue: TelemetryQueue) {
     post("/telemetry/events") {
         val body = call.receive<TelemetryBatchRequest>()
 
@@ -59,7 +59,7 @@ fun Route.telemetryRoutes(repository: TelemetryRepository) {
         }
 
         if (accepted.isNotEmpty()) {
-            repository.insertBatch(accepted)
+            queue.submit(accepted)
         }
 
         call.respond(HttpStatusCode.NoContent)

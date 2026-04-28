@@ -16,13 +16,19 @@ import kotlin.test.assertTrue
 
 class TelemetryRouteTest {
 
-    // Stand-in for TelemetryRepository — captures calls instead of hitting Postgres.
-    // Lets the route layer be tested in isolation without the JDBC + Hikari setup
-    // a real integration test would need.
     private class FakeRepo : TelemetryRepository() {
         val inserted = mutableListOf<TelemetryEvent>()
         override suspend fun insertBatch(events: List<TelemetryEvent>) {
             inserted += events
+        }
+    }
+
+    // Drains the events synchronously into the underlying repo so route-level
+    // assertions don't race the fire-and-forget scope from the real
+    // TelemetryQueue. Real wiring is covered in T10's slow-repo test.
+    private class FakeQueue(private val repo: FakeRepo) : TelemetryQueue(repo) {
+        override fun submit(events: List<TelemetryEvent>) {
+            kotlinx.coroutines.runBlocking { repo.insertBatch(events) }
         }
     }
 
@@ -38,8 +44,9 @@ class TelemetryRouteTest {
     @Test
     fun `valid batch of allowlisted events returns 204 and persists every event`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val body = """{"events":[${event("app_launched")},${event("search_executed")}]}"""
         val response = client.post("/v1/telemetry/events") {
@@ -55,8 +62,9 @@ class TelemetryRouteTest {
     @Test
     fun `empty batch returns 204 without touching the repository`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val response = client.post("/v1/telemetry/events") {
             contentType(ContentType.Application.Json)
@@ -70,8 +78,9 @@ class TelemetryRouteTest {
     @Test
     fun `non-allowlisted events are dropped on the floor while allowlisted ones still persist`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val body = """{"events":[
             ${event("search_executed")},
@@ -95,8 +104,9 @@ class TelemetryRouteTest {
     @Test
     fun `batch over 100 events returns 400`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val many = (1..101).joinToString(",") { event("app_launched", sessionId = "s$it") }
         val response = client.post("/v1/telemetry/events") {
@@ -111,8 +121,9 @@ class TelemetryRouteTest {
     @Test
     fun `event name longer than 64 chars returns 400`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val longName = "x".repeat(65)
         val response = client.post("/v1/telemetry/events") {
@@ -127,8 +138,9 @@ class TelemetryRouteTest {
     @Test
     fun `session id longer than 128 chars returns 400`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val longSession = "s".repeat(129)
         val response = client.post("/v1/telemetry/events") {
@@ -142,8 +154,9 @@ class TelemetryRouteTest {
     @Test
     fun `every event in a batch where all are non-allowlisted yields 204 with zero inserts`() = testApplication {
         val repo = FakeRepo()
+        val queue = FakeQueue(repo)
         installPlugins()
-        application { routing { route("/v1") { telemetryRoutes(repo) } } }
+        application { routing { route("/v1") { telemetryRoutes(queue) } } }
 
         val body = """{"events":[${event("totally_unknown_event")},${event("another_made_up_one")}]}"""
         val response = client.post("/v1/telemetry/events") {
