@@ -12,8 +12,8 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Keeps the passthrough-ingested long tail fresh.
@@ -39,7 +39,13 @@ class RepoRefreshWorker(
     private val startupDelay = 10.minutes
     private val cycleInterval = 1.hours
     private val batchSize = 50
-    private val pacePerRepo = 1.seconds
+    // Pacing between per-repo upstream calls. Default 1s ≈ 50s total per
+    // cycle, ~1200 repos/day. Tunable via REPO_REFRESH_PACE_MS so an operator
+    // can speed things up after backlog spikes (or slow them down if the
+    // rotation pool is tight).
+    private val pacePerRepo: kotlin.time.Duration =
+        (System.getenv("REPO_REFRESH_PACE_MS")?.toLongOrNull() ?: 1_000L)
+            .coerceAtLeast(0L).milliseconds
 
     private val advisoryLockId: Long = 911_002L
 
@@ -146,6 +152,12 @@ class RepoRefreshWorker(
 
     // Oldest-first over passthrough-only: repos NOT in any curated category or
     // topic bucket (those get refreshed by the Python fetcher daily).
+    //
+    // Anti-join via LEFT JOIN ... IS NULL — the previous NOT IN form forced
+    // a sequential scan of repos plus two uncorrelated subquery scans on
+    // repo_categories / repo_topic_buckets. The LEFT JOIN form combined with
+    // V9's idx_repos_indexed_at lets Postgres index-scan the order-by and
+    // hash-anti-join the two membership tables.
     private fun pickOldest(limit: Int): List<Pair<Long, String>> = transaction {
         val conn = TransactionManager.current().connection.connection as java.sql.Connection
         val out = mutableListOf<Pair<Long, String>>()
@@ -153,8 +165,9 @@ class RepoRefreshWorker(
             """
             SELECT r.id, r.full_name
             FROM repos r
-            WHERE r.id NOT IN (SELECT repo_id FROM repo_categories)
-              AND r.id NOT IN (SELECT repo_id FROM repo_topic_buckets)
+            LEFT JOIN repo_categories rc ON rc.repo_id = r.id
+            LEFT JOIN repo_topic_buckets rtb ON rtb.repo_id = r.id
+            WHERE rc.repo_id IS NULL AND rtb.repo_id IS NULL
             ORDER BY r.indexed_at ASC NULLS FIRST
             LIMIT ?
             """.trimIndent()
