@@ -89,6 +89,13 @@ object DatabaseFactory {
                     if (sqlState in IGNORABLE_MIGRATION_SQLSTATES) {
                         log.info("Migration $migration: idempotent skip (sqlState=$sqlState)")
                     } else {
+                        // logback async flush can lose this on JVM exit, so also
+                        // splat to stderr (unbuffered) to guarantee the operator
+                        // sees the failure in `docker logs` before the container
+                        // restart loop masks the cause.
+                        System.err.println(
+                            "FATAL: migration $migration failed (sqlState=$sqlState): ${e.message}"
+                        )
                         throw IllegalStateException(
                             "Migration $migration failed (sqlState=$sqlState): ${e.message}",
                             e,
