@@ -28,12 +28,26 @@ fun main() {
             // common ones; this list is what we explicitly forward and what
             // an attacker could set to test the pipeline.
             options.setBeforeSend { event, _ ->
-                event.request?.headers?.let { headers ->
-                    listOf(
-                        "Authorization", "X-GitHub-Token", "X-Admin-Token",
-                        "Cookie", "Set-Cookie", "X-Forwarded-For",
-                        "CF-Connecting-IP",
-                    ).forEach { headers.remove(it) }
+                try {
+                    event.request?.headers?.let { headers ->
+                        listOf(
+                            "Authorization", "X-GitHub-Token", "X-Admin-Token",
+                            "Cookie", "Set-Cookie", "X-Forwarded-For",
+                            "CF-Connecting-IP",
+                        ).forEach { headers.remove(it) }
+                    }
+                    event.message?.let { msg ->
+                        msg.formatted = scrubSentryMessage(msg.formatted)
+                    }
+                    event.exceptions?.forEach { ex ->
+                        ex.value = scrubSentryMessage(ex.value)
+                    }
+                    event.breadcrumbs?.forEach { crumb ->
+                        crumb.message = scrubSentryMessage(crumb.message)
+                    }
+                } catch (_: Throwable) {
+                    // Sentry instrumentation must never throw -- swallow and ship
+                    // whatever we have rather than crash the request handler.
                 }
                 event
             }
@@ -68,6 +82,22 @@ fun Application.module() {
 
     val repoRefreshWorker by inject<RepoRefreshWorker>()
     repoRefreshWorker.start()
+}
+
+// Strip long single-quoted spans (commonly the user-input value JDBC and
+// serialization errors splat into messages) and cap overall length so we
+// don't ship 10KB of stacktrace-embedded payloads to Sentry.
+private val SENTRY_QUOTED_SPAN = Regex("'[^']{32,}?'")
+private const val SENTRY_MESSAGE_MAX = 200
+
+private fun scrubSentryMessage(value: String?): String? {
+    if (value == null) return null
+    val stripped = SENTRY_QUOTED_SPAN.replace(value, "'<redacted>'")
+    return if (stripped.length > SENTRY_MESSAGE_MAX) {
+        stripped.take(SENTRY_MESSAGE_MAX) + "…"
+    } else {
+        stripped
+    }
 }
 
 // Under APP_ENV=production, refuse to start unless the critical secrets are
