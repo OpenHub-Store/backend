@@ -43,6 +43,13 @@ object ExternalMatchScorer {
         appLabel: String,
         hit: SearchHit,
     ): Double {
+        // Defensive guard: a blank appLabel would make `repoLower.contains("")`
+        // unconditionally true and award a free +0.20 substring bonus. The
+        // route layer rejects blank labels today, but the scorer is a public
+        // pure function — bad inputs from a future caller shouldn't produce
+        // false-positive scores.
+        if (appLabel.isBlank() || hit.repo.isBlank()) return 0.0
+
         var confidence = 0.0
 
         val repoLower = hit.repo.lowercase()

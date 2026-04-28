@@ -121,6 +121,29 @@ class ExternalMatchScorerTest {
     }
 
     @Test
+    fun `blank appLabel returns 0 instead of false-positive substring bonus`() {
+        // Without the defensive guard, "".contains("") is true → bogus +0.20.
+        // Route validates against blank, but the scorer is a public pure
+        // function — guard at the function entry, not at the route.
+        val confidence = ExternalMatchScorer.score(
+            packageName = "com.example.foo",
+            appLabel = "",
+            hit = hit(repo = "anything", stars = 9999, hasAndroidAssetInRecentReleases = true),
+        )
+        assertEquals(0.0, confidence, 0.0001)
+    }
+
+    @Test
+    fun `blank repo name returns 0`() {
+        val confidence = ExternalMatchScorer.score(
+            packageName = "com.example.foo",
+            appLabel = "Foo",
+            hit = hit(repo = "", stars = 9999, hasAndroidAssetInRecentReleases = true),
+        )
+        assertEquals(0.0, confidence, 0.0001)
+    }
+
+    @Test
     fun `confidence stays under 0_85 cap when all signals contribute`() {
         // Defense against accidentally raising the cap. If this ever returns
         // anything > 0.85, the auto-link tier (>= 0.85 in client policy) gets
