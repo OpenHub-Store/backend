@@ -9,6 +9,7 @@ import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
 import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
+import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.routes.configureRouting
 
@@ -64,6 +65,9 @@ fun Application.module() {
 
     val repoRefreshWorker by inject<RepoRefreshWorker>()
     repoRefreshWorker.start()
+
+    val retentionWorker by inject<RetentionWorker>()
+    retentionWorker.start()
 }
 
 // Under APP_ENV=production, refuse to start unless the critical secrets are
