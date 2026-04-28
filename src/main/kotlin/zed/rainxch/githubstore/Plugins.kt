@@ -134,13 +134,20 @@ fun Application.configureHTTP() {
         // path: any client could send `CF-Connecting-IP: <random>` and rotate
         // past the limiter at will. Same reasoning applies to every bucket
         // below.
+        //
+        // CDN vs direct-path note: on the CDN path Caddy sees the Gcore POP
+        // IP and every user behind that POP shares one bucket (limits there
+        // are best-effort). On api-direct.github-store.org the IP is real and
+        // these limits are the actual abuse floor — kept tight for that path.
         global {
             rateLimiter(limit = 120, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
-        // Events endpoint: stricter (30 per minute)
+        // Events endpoint: 3/min/IP (tightened 10× for direct-path abuse).
+        // 50 events/batch × 3 batches/min = 150 events/min/IP — comfortably
+        // covers any realistic session.
         register(RateLimitName("events")) {
-            rateLimiter(limit = 30, refillPeriod = 1.minutes)
+            rateLimiter(limit = 3, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
         // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
@@ -155,21 +162,26 @@ fun Application.configureHTTP() {
             requestKey(::forwardedFor)
         }
         // Telemetry: clients batch up to 100 events per POST, so volume per
-        // session is naturally low. 600/min/IP comfortably covers a chatty
-        // session yet still caps a misbehaving client at 60k events/min/IP.
+        // session is naturally low. 60/min/IP (tightened 10× for direct-path
+        // abuse) covers a chatty session yet still caps a misbehaving client
+        // at 6k events/min/IP.
         register(RateLimitName("telemetry")) {
-            rateLimiter(limit = 600, refillPeriod = 1.minutes)
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
-        // Auth device-flow start: low volume (one per login attempt). 10/hr/IP
-        // keeps abuse impossible without blocking legitimate retries after a
-        // failed or cancelled flow.
+        // Auth device-flow start: low volume (one per login attempt). 1/hr/IP
+        // (tightened 10× for direct-path abuse). One legitimate login per hour
+        // per device is plenty; a NAT'd household burns this quickly but the
+        // direct path is the fallback, not the primary, so the tradeoff favors
+        // the abuse-floor over the rare retry.
         register(RateLimitName("auth-start")) {
-            rateLimiter(limit = 10, refillPeriod = 1.hours)
+            rateLimiter(limit = 1, refillPeriod = 1.hours)
             requestKey(::forwardedFor)
         }
         // Auth device-flow poll: a real flow is ~180 polls over 15min at 5s
-        // intervals, so 200/hr/IP fits one full flow plus a small margin.
+        // intervals, so the floor cannot drop below ~200 without breaking
+        // every login. Kept at 200/hr/IP — `auth-start` is the chokepoint for
+        // abuse, since you can't poll without a device_code from start.
         register(RateLimitName("auth-poll")) {
             rateLimiter(limit = 200, refillPeriod = 1.hours)
             requestKey(::forwardedFor)
