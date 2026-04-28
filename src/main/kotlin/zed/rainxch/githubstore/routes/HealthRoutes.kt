@@ -3,7 +3,8 @@ package zed.rainxch.githubstore.routes
 import io.ktor.http.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.jetbrains.exposed.sql.transactions.transaction
+import kotlinx.coroutines.Dispatchers
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.BuildInfo
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.model.HealthResponse
@@ -11,7 +12,7 @@ import zed.rainxch.githubstore.model.HealthResponse
 fun Route.healthRoutes(meilisearch: MeilisearchClient) {
     get("/health") {
         val postgresStatus = try {
-            transaction { exec("SELECT 1") }
+            newSuspendedTransaction(Dispatchers.IO) { exec("SELECT 1") }
             "ok"
         } catch (e: Exception) {
             "error: ${e.message}"

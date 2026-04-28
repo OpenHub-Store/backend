@@ -4,11 +4,16 @@ import io.ktor.http.*
 import io.ktor.server.auth.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.transactions.TransactionManager
-import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 private const val BASIC_AUTH_REALM = "github-store-admin"
 const val ADMIN_BASIC_AUTH = "admin-basic"
@@ -54,8 +59,11 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry, workerSupervisor: Worke
                     zeroResult = snap.zeroResult,
                     avgLatencyMs = snap.avgLatencyMs,
                 )
-                val db = fetchDbMetrics()
-                val top = fetchTopRepos()
+                val (db, top) = coroutineScope {
+                    val dbAsync = async { fetchDbMetrics() }
+                    val topAsync = async { fetchTopRepos() }
+                    dbAsync.await() to topAsync.await()
+                }
                 val workers = workerSupervisor.lastTicks().mapValues { it.value.toString() }
                 call.respond(MetricsResponse(
                     counters = counters,
@@ -90,37 +98,63 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry, workerSupervisor: Worke
 private fun authorized(call: io.ktor.server.application.ApplicationCall, adminToken: String?): Boolean {
     if (adminToken == null) return true
     val header = call.request.headers["X-Admin-Token"]
-    if (header == adminToken) return true
+    // Constant-time compare to defang token-length / per-byte timing oracles.
+    // MessageDigest.isEqual NPEs on null inputs, so guard first.
+    if (header != null && MessageDigest.isEqual(
+            header.toByteArray(StandardCharsets.UTF_8),
+            adminToken.toByteArray(StandardCharsets.UTF_8),
+        )) return true
     val principal = call.principal<UserIdPrincipal>()
     return principal != null
 }
 
-private fun fetchDbMetrics(): TrainingMetrics = transaction {
-    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+private suspend fun fetchDbMetrics(): TrainingMetrics = coroutineScope {
+    val unprocessed = async { countUnprocessedMisses() }
+    val reposWithSignals = async { countReposWithSignals() }
+    val reposWithSearchScore = async { countReposWithSearchScore() }
+    val topMisses = async { fetchTopMisses() }
+    TrainingMetrics(
+        unprocessedMisses = unprocessed.await(),
+        reposWithSignals = reposWithSignals.await(),
+        reposWithSearchScore = reposWithSearchScore.await(),
+        topMissesLast7d = topMisses.await(),
+    )
+}
 
-    val unprocessed = conn.prepareStatement(
+private suspend fun countUnprocessedMisses(): Long = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    conn.prepareStatement(
         "SELECT COUNT(*) FROM search_misses WHERE last_processed_at IS NULL"
     ).use { ps ->
         ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
     }
+}
 
-    val reposWithSignals = conn.prepareStatement(
+private suspend fun countReposWithSignals(): Long = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    conn.prepareStatement(
         "SELECT COUNT(*) FROM repo_signals"
     ).use { ps ->
         ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
     }
+}
 
-    val reposWithSearchScore = conn.prepareStatement(
+private suspend fun countReposWithSearchScore(): Long = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    conn.prepareStatement(
         "SELECT COUNT(*) FROM repos WHERE search_score IS NOT NULL"
     ).use { ps ->
         ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
     }
+}
 
-    // Top misses: report only the hash-prefix and counts. Raw query text is
-    // no longer stored (privacy hardening, V6) so the dashboard surfaces an
-    // 8-char identifier per query — useful for spotting hotspots without
-    // exposing what users typed.
-    val topMisses = mutableListOf<TopMiss>()
+// Top misses: report only the hash-prefix and counts. Raw query text is
+// no longer stored (privacy hardening, V6) so the dashboard surfaces an
+// 8-char identifier per query — useful for spotting hotspots without
+// exposing what users typed.
+private suspend fun fetchTopMisses(): List<TopMiss> = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    val out = mutableListOf<TopMiss>()
     conn.prepareStatement(
         """
         SELECT query_hash, miss_count, result_count, last_seen_at
@@ -132,7 +166,7 @@ private fun fetchDbMetrics(): TrainingMetrics = transaction {
     ).use { ps ->
         ps.executeQuery().use { rs ->
             while (rs.next()) {
-                topMisses.add(
+                out.add(
                     TopMiss(
                         query = rs.getString("query_hash")?.take(8) ?: "—",
                         missCount = rs.getInt("miss_count"),
@@ -143,19 +177,23 @@ private fun fetchDbMetrics(): TrainingMetrics = transaction {
             }
         }
     }
+    out
+}
 
-    TrainingMetrics(
-        unprocessedMisses = unprocessed,
-        reposWithSignals = reposWithSignals,
-        reposWithSearchScore = reposWithSearchScore,
-        topMissesLast7d = topMisses,
+private suspend fun fetchTopRepos(): TopRepos = coroutineScope {
+    val byScore = async { fetchTopReposByScore() }
+    val byClicks = async { fetchTopReposByClicks() }
+    val byInstalls = async { fetchTopReposByInstalls() }
+    TopRepos(
+        byScore = byScore.await(),
+        byClicks = byClicks.await(),
+        byInstalls = byInstalls.await(),
     )
 }
 
-private fun fetchTopRepos(): TopRepos = transaction {
+private suspend fun fetchTopReposByScore(): List<TopRepo> = newSuspendedTransaction(Dispatchers.IO) {
     val conn = TransactionManager.current().connection.connection as java.sql.Connection
-
-    val byScore = mutableListOf<TopRepo>()
+    val out = mutableListOf<TopRepo>()
     conn.prepareStatement(
         """
         SELECT id, full_name, stars, search_score
@@ -167,7 +205,7 @@ private fun fetchTopRepos(): TopRepos = transaction {
     ).use { ps ->
         ps.executeQuery().use { rs ->
             while (rs.next()) {
-                byScore.add(
+                out.add(
                     TopRepo(
                         id = rs.getLong("id"),
                         fullName = rs.getString("full_name"),
@@ -178,8 +216,12 @@ private fun fetchTopRepos(): TopRepos = transaction {
             }
         }
     }
+    out
+}
 
-    val byClicks = mutableListOf<TopRepo>()
+private suspend fun fetchTopReposByClicks(): List<TopRepo> = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    val out = mutableListOf<TopRepo>()
     conn.prepareStatement(
         """
         SELECT r.id, r.full_name, r.stars, s.click_count_30d AS v
@@ -192,7 +234,7 @@ private fun fetchTopRepos(): TopRepos = transaction {
     ).use { ps ->
         ps.executeQuery().use { rs ->
             while (rs.next()) {
-                byClicks.add(
+                out.add(
                     TopRepo(
                         id = rs.getLong("id"),
                         fullName = rs.getString("full_name"),
@@ -203,8 +245,12 @@ private fun fetchTopRepos(): TopRepos = transaction {
             }
         }
     }
+    out
+}
 
-    val byInstalls = mutableListOf<TopRepo>()
+private suspend fun fetchTopReposByInstalls(): List<TopRepo> = newSuspendedTransaction(Dispatchers.IO) {
+    val conn = TransactionManager.current().connection.connection as java.sql.Connection
+    val out = mutableListOf<TopRepo>()
     conn.prepareStatement(
         """
         SELECT r.id, r.full_name, r.stars, s.install_success_30d AS v
@@ -217,7 +263,7 @@ private fun fetchTopRepos(): TopRepos = transaction {
     ).use { ps ->
         ps.executeQuery().use { rs ->
             while (rs.next()) {
-                byInstalls.add(
+                out.add(
                     TopRepo(
                         id = rs.getLong("id"),
                         fullName = rs.getString("full_name"),
@@ -228,8 +274,7 @@ private fun fetchTopRepos(): TopRepos = transaction {
             }
         }
     }
-
-    TopRepos(byScore = byScore, byClicks = byClicks, byInstalls = byInstalls)
+    out
 }
 
 @Serializable
