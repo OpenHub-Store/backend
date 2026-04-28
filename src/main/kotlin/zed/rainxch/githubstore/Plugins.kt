@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
 import zed.rainxch.githubstore.routes.ADMIN_BASIC_AUTH
+import zed.rainxch.githubstore.util.ApiError
 import kotlinx.serialization.json.Json
 import org.slf4j.event.Level
 import kotlin.time.Duration.Companion.hours
@@ -41,6 +42,20 @@ fun Application.configureSerialization() {
 
 private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
 private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9\\-]{1,64}$")
+
+// Reject oversized or unknown-size bodies before reading them.
+// Idiom at call sites: `if (!call.requireMaxBody(N)) return@post`.
+// Only effective when the client sends Content-Length — chunked transfer-
+// encoding bypasses this. Caddy's `request_body { max_size ... }` directive
+// handles the chunked path at the edge.
+internal suspend fun ApplicationCall.requireMaxBody(maxBytes: Long): Boolean {
+    val len = request.contentLength()
+    if (len == null || len > maxBytes) {
+        respond(HttpStatusCode.PayloadTooLarge, ApiError("payload_too_large"))
+        return false
+    }
+    return true
+}
 
 // Hoisted so all rate-limit buckets share one definition. A typo in any
 // inlined copy would silently degrade that bucket's key to "unknown",
