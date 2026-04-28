@@ -18,6 +18,8 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.util.AttributeKey
 import io.sentry.Sentry
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
 import zed.rainxch.githubstore.routes.ADMIN_BASIC_AUTH
 import kotlinx.serialization.json.Json
@@ -168,7 +170,13 @@ fun Application.configureHTTP() {
         basic(ADMIN_BASIC_AUTH) {
             realm = "github-store-admin"
             validate { creds ->
-                if (adminToken != null && creds.password == adminToken) {
+                // Constant-time compare so an attacker can't binary-search the
+                // token from the response-time delta of a `==` short-circuit.
+                if (adminToken != null && MessageDigest.isEqual(
+                        creds.password.toByteArray(StandardCharsets.UTF_8),
+                        adminToken.toByteArray(StandardCharsets.UTF_8),
+                    )
+                ) {
                     UserIdPrincipal(creds.name)
                 } else null
             }
