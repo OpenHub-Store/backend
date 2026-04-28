@@ -71,6 +71,7 @@ object DatabaseFactory {
                 "V8__telemetry_props_jsonb.sql",
                 "V9__events_indexes_and_repos_indexed_at.sql",
                 "V11__device_id_hmac_rehash.sql",
+                "V12__signing_fingerprint.sql",
             )
             for (migration in migrations) {
                 val rawSql = this::class.java.classLoader
