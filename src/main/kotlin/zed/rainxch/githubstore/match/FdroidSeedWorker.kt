@@ -187,15 +187,7 @@ class FdroidSeedWorker {
         }
     }
 
-    private fun parseGithubUrl(url: String): Pair<String, String>? {
-        // Accept https://github.com/{owner}/{repo}{/...,.git}? — strip trailing
-        // path / query / .git. Reject anything that isn't github.com.
-        val match = GITHUB_URL_RE.matchEntire(url.trim()) ?: return null
-        val owner = match.groupValues[1]
-        val repo = match.groupValues[2].removeSuffix(".git")
-        if (owner.isBlank() || repo.isBlank()) return null
-        return owner to repo
-    }
+    private fun parseGithubUrl(url: String): Pair<String, String>? = GithubSourceUrl.parse(url)
 
     /** AB:CD:EF:... 32 octets. F-Droid hashes are 64 hex chars; insert colons. */
     private fun formatColonHex(hex: String): String =
@@ -203,12 +195,6 @@ class FdroidSeedWorker {
 
     private companion object {
         const val FDROID_INDEX_URL = "https://f-droid.org/repo/index-v2.json"
-
-        // Matches https://github.com/owner/repo with optional trailing path or
-        // .git suffix. Owner/repo follow GitHub's actual character rules.
-        private val GITHUB_URL_RE = Regex(
-            "^https?://github\\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100})(?:\\.git)?(?:/.*)?$",
-        )
     }
 }
 
