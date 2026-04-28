@@ -229,10 +229,10 @@ fun Application.configureHTTP() {
             call.application.environment.log.info(
                 "Bad request (rid={}): {}", rid ?: "-", cause.javaClass.simpleName,
             )
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_request"))
+            call.respond(HttpStatusCode.BadRequest, ApiError("invalid_request"))
         }
         exception<NotFoundException> { call, _ ->
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "not_found"))
+            call.respond(HttpStatusCode.NotFound, ApiError("not_found"))
         }
         exception<Throwable> { call, cause ->
             val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
@@ -248,7 +248,7 @@ fun Application.configureHTTP() {
             }
             call.respond(
                 HttpStatusCode.InternalServerError,
-                mapOf("error" to "Internal server error")
+                ApiError("internal_error", message = "Internal server error"),
             )
         }
     }
