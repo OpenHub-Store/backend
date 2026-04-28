@@ -1,8 +1,9 @@
 package zed.rainxch.githubstore.telemetry
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.batchInsert
-import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.db.TelemetryEvents
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -10,12 +11,12 @@ import java.time.ZoneOffset
 
 open class TelemetryRepository {
 
-    private val json = Json { encodeDefaults = false }
+    val json = Json { encodeDefaults = false }
 
-    open fun insertBatch(events: List<TelemetryEvent>) {
+    open suspend fun insertBatch(events: List<TelemetryEvent>) {
         if (events.isEmpty()) return
         val now = OffsetDateTime.now(ZoneOffset.UTC)
-        transaction {
+        newSuspendedTransaction(Dispatchers.IO) {
             TelemetryEvents.batchInsert(events) { event ->
                 this[TelemetryEvents.ts] = OffsetDateTime.ofInstant(
                     Instant.ofEpochMilli(event.timestamp),

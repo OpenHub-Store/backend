@@ -4,8 +4,6 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.telemetry.TelemetryAllowlist
 import zed.rainxch.githubstore.telemetry.TelemetryBatchRequest
@@ -61,9 +59,7 @@ fun Route.telemetryRoutes(repository: TelemetryRepository) {
         }
 
         if (accepted.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
-                repository.insertBatch(accepted)
-            }
+            repository.insertBatch(accepted)
         }
 
         call.respond(HttpStatusCode.NoContent)

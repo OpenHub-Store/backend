@@ -21,7 +21,7 @@ class TelemetryRouteTest {
     // a real integration test would need.
     private class FakeRepo : TelemetryRepository() {
         val inserted = mutableListOf<TelemetryEvent>()
-        override fun insertBatch(events: List<TelemetryEvent>) {
+        override suspend fun insertBatch(events: List<TelemetryEvent>) {
             inserted += events
         }
     }
