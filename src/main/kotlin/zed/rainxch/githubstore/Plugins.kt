@@ -186,6 +186,21 @@ fun Application.configureHTTP() {
             rateLimiter(limit = 200, refillPeriod = 1.hours)
             requestKey(::forwardedFor)
         }
+        // External match: client batches up to 25 candidates per call, each
+        // does 1-2 GitHub API calls. 30/min/IP gives ~750 candidates/min/IP,
+        // which fits any legitimate "import existing apps" flow comfortably.
+        register(RateLimitName("external-match")) {
+            rateLimiter(limit = 30, refillPeriod = 1.minutes)
+            requestKey(::forwardedFor)
+        }
+        // Signing seeds: paginated dump, clients fetch incrementally with a
+        // `since` cursor so steady-state traffic is one short call per sync.
+        // 60/min/IP covers a worst-case "client lost its local seed table
+        // and is re-paging the whole 5k-row corpus" scenario.
+        register(RateLimitName("signing-seeds")) {
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            requestKey(::forwardedFor)
+        }
     }
 
     // Basic Auth for the /v1/internal/dashboard HTML page. Username is

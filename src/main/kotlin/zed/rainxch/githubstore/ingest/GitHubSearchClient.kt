@@ -82,9 +82,11 @@ class GitHubSearchClient(
 
     // Central fallback token selector. Called whenever a request doesn't carry
     // X-GitHub-Token (i.e. passthrough, SignalAggregationWorker,
-    // SearchMissWorker, RepoRefreshWorker — everything that shares the
-    // backend's own quota).
-    private fun pickFallbackToken(): String? {
+    // RepoRefreshWorker, ExternalMatchService — everything that shares the
+    // backend's own quota). `internal` so cross-package callers in the same
+    // module (notably ExternalMatchService) can route through the same
+    // rotation pool and respect the quiet-window guarantee.
+    internal fun pickFallbackToken(): String? {
         if (isQuietWindowNow()) return githubToken
         if (tokenPool.isEmpty()) return githubToken
         val idx = rotationCursor.getAndIncrement().rem(tokenPool.size).let {

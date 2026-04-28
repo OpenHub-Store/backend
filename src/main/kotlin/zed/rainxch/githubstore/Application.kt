@@ -10,6 +10,7 @@ import org.koin.logger.slf4jLogger
 import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.RetentionWorker
+import zed.rainxch.githubstore.match.FdroidSeedWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.routes.configureRouting
@@ -83,6 +84,9 @@ fun Application.module() {
 
     val retentionWorker by inject<RetentionWorker>()
     retentionWorker.start()
+
+    val fdroidSeedWorker by inject<FdroidSeedWorker>()
+    fdroidSeedWorker.start()
 
     val workerSupervisor by inject<WorkerSupervisor>()
     monitor.subscribe(ApplicationStopping) {
