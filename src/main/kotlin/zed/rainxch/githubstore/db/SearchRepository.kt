@@ -1,7 +1,8 @@
 package zed.rainxch.githubstore.db
 
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.exposed.sql.transactions.TransactionManager
-import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import zed.rainxch.githubstore.model.RepoOwner
 import zed.rainxch.githubstore.model.RepoResponse
 import zed.rainxch.githubstore.util.formatRecency
@@ -11,13 +12,13 @@ import java.time.temporal.ChronoUnit
 
 class SearchRepository {
 
-    fun search(
+    suspend fun search(
         query: String,
         platform: String? = null,
         sort: String = "relevance",
         limit: Int = 20,
         offset: Int = 0,
-    ): List<RepoResponse> = transaction {
+    ): List<RepoResponse> = newSuspendedTransaction(Dispatchers.IO) {
         val platformColumn = when (platform) {
             "android" -> "has_installers_android"
             "windows" -> "has_installers_windows"
