@@ -161,14 +161,6 @@ fun Application.configureHTTP() {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
-        // Telemetry: clients batch up to 100 events per POST, so volume per
-        // session is naturally low. 60/min/IP (tightened 10× for direct-path
-        // abuse) covers a chatty session yet still caps a misbehaving client
-        // at 6k events/min/IP.
-        register(RateLimitName("telemetry")) {
-            rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey(::forwardedFor)
-        }
         // Auth device-flow start: low volume (one per login attempt). 1/hr/IP
         // (tightened 10× for direct-path abuse). One legitimate login per hour
         // per device is plenty; a NAT'd household burns this quickly but the

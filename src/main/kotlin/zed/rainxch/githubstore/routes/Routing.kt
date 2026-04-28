@@ -17,7 +17,6 @@ import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.match.ExternalMatchService
 import zed.rainxch.githubstore.match.SigningFingerprintRepository
-import zed.rainxch.githubstore.telemetry.TelemetryQueue
 
 fun Application.configureRouting() {
     val eventRepository by inject<EventRepository>()
@@ -30,7 +29,6 @@ fun Application.configureRouting() {
     val resourceClient by inject<GitHubResourceClient>()
     val searchMetrics by inject<SearchMetricsRegistry>()
     val badgeService by inject<BadgeService>()
-    val telemetryQueue by inject<TelemetryQueue>()
     val workerSupervisor by inject<WorkerSupervisor>()
     val signingFingerprintRepository by inject<SigningFingerprintRepository>()
     val externalMatchService by inject<ExternalMatchService>()
@@ -40,9 +38,6 @@ fun Application.configureRouting() {
             healthRoutes(meilisearchClient)
             rateLimit(RateLimitName("events")) {
                 eventRoutes(eventRepository)
-            }
-            rateLimit(RateLimitName("telemetry")) {
-                telemetryRoutes(telemetryQueue)
             }
             categoryRoutes(repoRepository)
             topicRoutes(repoRepository)

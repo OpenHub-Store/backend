@@ -14,9 +14,9 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * Daily retention sweep — drops events and telemetry_events older than the
- * 90-day window the rest of the pipeline cares about. The aggregation worker
- * already only looks back 30 days; older rows are dead weight.
+ * Daily retention sweep — drops events older than the 90-day window the rest
+ * of the pipeline cares about. The aggregation worker already only looks back
+ * 30 days; older rows are dead weight.
  *
  * Postgres rejects LIMIT directly on DELETE, so we go through a CTID
  * subquery and loop in 10k-row chunks until a chunk deletes fewer rows than
@@ -65,12 +65,8 @@ class RetentionWorker(
     }
 
     fun runCycle() {
-        val telemetrySwept = sweep("telemetry_events")
         val eventsSwept = sweep("events")
-        log.info(
-            "Retention cycle done: telemetry_events={} events={} (>{}d)",
-            telemetrySwept, eventsSwept, retentionDays,
-        )
+        log.info("Retention cycle done: events={} (>{}d)", eventsSwept, retentionDays)
     }
 
     private fun sweep(table: String): Long {

@@ -67,11 +67,14 @@ object DatabaseFactory {
                 "V4__signals_and_search_score.sql",
                 "V5__resource_cache.sql",
                 "V6__hash_device_id_drop_query_sample.sql",
-                "V7__telemetry_events.sql",
-                "V8__telemetry_props_jsonb.sql",
                 "V9__events_indexes_and_repos_indexed_at.sql",
                 "V11__device_id_hmac_rehash.sql",
                 "V12__signing_fingerprint.sql",
+                // V13 drops the telemetry_events table after the pipeline was
+                // reverted. V7 (create) and V8 (text->jsonb) are intentionally
+                // delisted above so a fresh install never creates the table
+                // only for V13 to drop it seconds later.
+                "V13__drop_telemetry_events.sql",
             )
             for (migration in migrations) {
                 val rawSql = this::class.java.classLoader
