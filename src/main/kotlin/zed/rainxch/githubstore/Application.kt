@@ -11,6 +11,7 @@ import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
+import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.routes.configureRouting
 
 fun main() {
@@ -68,6 +69,11 @@ fun Application.module() {
 
     val retentionWorker by inject<RetentionWorker>()
     retentionWorker.start()
+
+    val workerSupervisor by inject<WorkerSupervisor>()
+    monitor.subscribe(ApplicationStopping) {
+        workerSupervisor.cancelAll()
+    }
 }
 
 // Under APP_ENV=production, refuse to start unless the critical secrets are
