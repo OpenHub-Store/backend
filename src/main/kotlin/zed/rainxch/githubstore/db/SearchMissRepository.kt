@@ -1,5 +1,6 @@
 package zed.rainxch.githubstore.db
 
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.upsert
 import java.security.MessageDigest
