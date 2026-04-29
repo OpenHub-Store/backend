@@ -11,6 +11,7 @@ import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.match.FdroidSeedWorker
+import zed.rainxch.githubstore.mirrors.MirrorStatusWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.routes.configureRouting
@@ -87,6 +88,9 @@ fun Application.module() {
 
     val fdroidSeedWorker by inject<FdroidSeedWorker>()
     fdroidSeedWorker.start()
+
+    val mirrorStatusWorker by inject<MirrorStatusWorker>()
+    mirrorStatusWorker.start()
 
     val workerSupervisor by inject<WorkerSupervisor>()
     monitor.subscribe(ApplicationStopping) {

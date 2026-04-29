@@ -20,6 +20,8 @@ import zed.rainxch.githubstore.badge.FdroidVersionClient
 import zed.rainxch.githubstore.match.ExternalMatchService
 import zed.rainxch.githubstore.match.FdroidSeedWorker
 import zed.rainxch.githubstore.match.SigningFingerprintRepository
+import zed.rainxch.githubstore.mirrors.MirrorStatusRegistry
+import zed.rainxch.githubstore.mirrors.MirrorStatusWorker
 
 val appModule = module {
     single { EventRepository() }
@@ -41,4 +43,6 @@ val appModule = module {
     single { SigningFingerprintRepository() }
     single { ExternalMatchService(signingFingerprintRepository = get(), cache = get(), searchClient = get()) }
     single { FdroidSeedWorker(signingFingerprintRepository = get(), supervisor = get()) }
+    single { MirrorStatusRegistry() }
+    single { MirrorStatusWorker(registry = get(), supervisor = get()) }
 }

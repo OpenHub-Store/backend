@@ -17,6 +17,7 @@ import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
 import zed.rainxch.githubstore.match.ExternalMatchService
 import zed.rainxch.githubstore.match.SigningFingerprintRepository
+import zed.rainxch.githubstore.mirrors.MirrorStatusRegistry
 
 fun Application.configureRouting() {
     val eventRepository by inject<EventRepository>()
@@ -32,6 +33,7 @@ fun Application.configureRouting() {
     val workerSupervisor by inject<WorkerSupervisor>()
     val signingFingerprintRepository by inject<SigningFingerprintRepository>()
     val externalMatchService by inject<ExternalMatchService>()
+    val mirrorStatusRegistry by inject<MirrorStatusRegistry>()
 
     routing {
         route("/v1") {
@@ -55,6 +57,9 @@ fun Application.configureRouting() {
             }
             rateLimit(RateLimitName("external-match")) {
                 externalMatchRoutes(externalMatchService)
+            }
+            rateLimit(RateLimitName("mirrors-list")) {
+                mirrorRoutes(mirrorStatusRegistry)
             }
             rateLimit(RateLimitName("badges")) {
                 badgeRoutes(badgeService)

@@ -193,6 +193,14 @@ fun Application.configureHTTP() {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
+        // Mirrors list: clients fetch ~once per 24h normally; 30/min/IP is
+        // generous against any reasonable refresh pattern but caps abuse.
+        // The endpoint also has aggressive Cloudflare edge caching so most
+        // requests don't reach origin at all.
+        register(RateLimitName("mirrors-list")) {
+            rateLimiter(limit = 30, refillPeriod = 1.minutes)
+            requestKey(::forwardedFor)
+        }
     }
 
     // Basic Auth for the /v1/internal/dashboard HTML page. Username is
