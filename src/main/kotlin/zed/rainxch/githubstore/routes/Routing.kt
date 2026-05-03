@@ -4,6 +4,7 @@ import io.ktor.server.application.*
 import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.routing.*
 import org.koin.ktor.ext.inject
+import zed.rainxch.githubstore.announcements.AnnouncementsRegistry
 import zed.rainxch.githubstore.db.EventRepository
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.RepoRepository
@@ -34,6 +35,7 @@ fun Application.configureRouting() {
     val signingFingerprintRepository by inject<SigningFingerprintRepository>()
     val externalMatchService by inject<ExternalMatchService>()
     val mirrorStatusRegistry by inject<MirrorStatusRegistry>()
+    val announcementsRegistry by inject<AnnouncementsRegistry>()
 
     routing {
         route("/v1") {
@@ -61,6 +63,7 @@ fun Application.configureRouting() {
             rateLimit(RateLimitName("mirrors-list")) {
                 mirrorRoutes(mirrorStatusRegistry)
             }
+            announcementsRoutes(announcementsRegistry)
             rateLimit(RateLimitName("badges")) {
                 badgeRoutes(badgeService)
             }

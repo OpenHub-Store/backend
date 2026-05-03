@@ -1,6 +1,8 @@
 package zed.rainxch.githubstore
 
 import org.koin.dsl.module
+import zed.rainxch.githubstore.announcements.AnnouncementLoader
+import zed.rainxch.githubstore.announcements.AnnouncementsRegistry
 import zed.rainxch.githubstore.db.EventRepository
 import zed.rainxch.githubstore.db.MeilisearchClient
 import zed.rainxch.githubstore.db.RepoRepository
@@ -55,4 +57,6 @@ val appModule = module {
     single { FdroidSeedWorker(signingFingerprintRepository = get(), supervisor = get()) }
     single { MirrorStatusRegistry() }
     single { MirrorStatusWorker(registry = get(), supervisor = get()) }
+    single { AnnouncementLoader() }
+    single { AnnouncementsRegistry(loader = get()) }
 }
