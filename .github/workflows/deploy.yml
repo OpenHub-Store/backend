@@ -1,0 +1,97 @@
+name: Deploy to production
+
+on:
+  # Auto-deploy whenever main moves (PR merge, direct admin commit).
+  push:
+    branches: [main]
+  # Manual button from the Actions tab for break-glass redeploys when no
+  # code changed (e.g. forcing a clean rebuild after manual env-var edit).
+  workflow_dispatch:
+
+# Only one production deploy at a time. Don't cancel an in-flight deploy if a
+# new commit lands -- queue the new one. Aborting mid-build can leave the
+# container in a half-recreated state.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+# Minimum-needed token. We do not write back to the repo from this workflow.
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # printf preserves literal newlines; using echo would mangle the key.
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Sync repo to VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # Same exclude list as the local deploy.sh -- never ship dev compose
+          # overrides, secrets, or laptop-only artifacts.
+          rsync -avz --delete \
+            --exclude '.git/' \
+            --exclude '.gradle/' \
+            --exclude '.kotlin/' \
+            --exclude 'build/' \
+            --exclude '.idea/' \
+            --exclude '.vscode/' \
+            --exclude '.DS_Store' \
+            --exclude '.env' \
+            --exclude 'docker-compose.override.yml' \
+            --exclude 'internal/' \
+            --exclude '.github/' \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:/opt/github-store-backend/"
+
+      - name: Build and restart services
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -euo pipefail
+            cd /opt/github-store-backend
+            docker compose -f docker-compose.prod.yml up -d --build
+            # Caddyfile is bind-mounted; reload picks up changes without a
+            # TLS reconnect blip. Fall back to restart if reload fails.
+            docker compose -f docker-compose.prod.yml exec -T caddy \
+              caddy reload --config /etc/caddy/Caddyfile \
+              || docker compose -f docker-compose.prod.yml restart caddy
+          '
+
+      - name: Health check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" '
+            for i in $(seq 1 30); do
+              if docker exec github-store-backend-app-1 \
+                  curl -sf http://localhost:8080/v1/health >/dev/null 2>&1; then
+                echo "Healthy after $((i*2))s"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "Health check failed after 60s" >&2
+            exit 1
+          '
