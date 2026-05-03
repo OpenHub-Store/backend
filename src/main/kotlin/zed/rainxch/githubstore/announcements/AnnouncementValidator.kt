@@ -13,23 +13,37 @@ object AnnouncementValidator {
     private val CATEGORIES = setOf("NEWS", "PRIVACY", "SURVEY", "SECURITY", "STATUS")
     private val ICON_HINTS = setOf("INFO", "WARNING", "SECURITY", "CELEBRATION", "CHANGE")
 
-    private const val ID_MAX = 64
     private const val TITLE_MAX = 80
     private const val BODY_MIN = 50
     private const val BODY_MAX = 600
+    private const val CTA_LABEL_MAX = 30
+
+    // Lowercase alphanumerics + hyphen, 1-64 chars. Matches the admin-panel
+    // handoff doc and rejects path traversal, control chars, mixed case.
+    private val ID_PATTERN = Regex("^[a-z0-9-]{1,64}$")
 
     // BCP-47 -- a primary subtag of 2–3 letters, optional region/script subtags
     // of 2–8 alphanumerics each. Strict enough to reject "en_US" and "EN-us-".
     private val BCP47 = Regex("^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
+    // Unicode bidi-override codepoints — used in homograph attacks to flip
+    // visual rendering of identifiers/URLs.
+    private val BIDI_OVERRIDE = "[‪-‮⁦-⁩]".toRegex()
+
     fun validate(item: AnnouncementDto): List<String> {
         val errs = mutableListOf<String>()
 
         if (item.id.isBlank()) errs += "id: blank"
-        else if (item.id.length > ID_MAX) errs += "id: > $ID_MAX chars"
+        else if (!ID_PATTERN.matches(item.id)) errs += "id: must match ^[a-z0-9-]{1,64}$"
 
         if (!isIso8601(item.publishedAt)) errs += "publishedAt: not ISO 8601"
         item.expiresAt?.let { if (!isIso8601(it)) errs += "expiresAt: not ISO 8601" }
+
+        if (item.expiresAt != null && isIso8601(item.publishedAt) && isIso8601(item.expiresAt)) {
+            val pub = Instant.parse(item.publishedAt)
+            val exp = Instant.parse(item.expiresAt)
+            if (!exp.isAfter(pub)) errs += "expiresAt: must be after publishedAt"
+        }
 
         val severity = item.severity.uppercase()
         if (severity !in SEVERITIES) errs += "severity: '${item.severity}' not in $SEVERITIES"
@@ -46,11 +60,17 @@ object AnnouncementValidator {
         // overrun even when the source is in budget.
         validateText(label = "title", value = item.title, min = 1, max = TITLE_MAX)?.let(errs::add)
         validateText(label = "body", value = item.body, min = BODY_MIN, max = BODY_MAX)?.let(errs::add)
+        item.ctaLabel?.let {
+            validateText(label = "ctaLabel", value = it, min = 1, max = CTA_LABEL_MAX)?.let(errs::add)
+        }
 
         item.i18n.forEach { (locale, variant) ->
             if (!BCP47.matches(locale)) errs += "i18n.$locale: not a BCP-47 code"
             variant.title?.let { validateText("i18n.$locale.title", it, 1, TITLE_MAX)?.let(errs::add) }
             variant.body?.let { validateText("i18n.$locale.body", it, BODY_MIN, BODY_MAX)?.let(errs::add) }
+            variant.ctaLabel?.let {
+                validateText("i18n.$locale.ctaLabel", it, 1, CTA_LABEL_MAX)?.let(errs::add)
+            }
             variant.ctaUrl?.let { if (!it.startsWith("https://")) errs += "i18n.$locale.ctaUrl: must be https://" }
         }
 
@@ -85,6 +105,8 @@ object AnnouncementValidator {
         return when {
             len < min -> "$label: < $min chars (was $len)"
             len > max -> "$label: > $max chars (was $len)"
+            value.any { it.isISOControl() } -> "$label: contains control character"
+            BIDI_OVERRIDE.containsMatchIn(value) -> "$label: contains bidi override character"
             else -> null
         }
     }
