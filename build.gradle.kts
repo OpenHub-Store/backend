@@ -106,3 +106,17 @@ sourceSets["main"].resources.srcDir(generateBuildInfo)
 kotlin {
     jvmToolchain(21)
 }
+
+// Pre-PR validator for announcement JSON drafts. Authors / translators run
+// `./gradlew validateAnnouncements` before opening a PR; CI runs the same
+// task. Exit non-zero on any malformed file or duplicate id.
+tasks.register<JavaExec>("validateAnnouncements") {
+    group = "verification"
+    description = "Validate src/main/resources/announcements/*.json against the schema."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("zed.rainxch.githubstore.announcements.AnnouncementsCliKt")
+    // Forward `-Pdir=path` to the CLI as `--dir path`. Default (no override)
+    // points at the in-tree resource directory.
+    val customDir = (project.findProperty("dir") as String?)
+    if (customDir != null) args("--dir", customDir)
+}

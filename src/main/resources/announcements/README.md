@@ -7,10 +7,16 @@ response envelope at serve time.
 ## Authoring an announcement
 
 1. Add `<id>.json` here. ID convention: `<YYYY-MM-DD>-<kebab-case-slug>`.
-2. Validate against the rubric in
+2. Validate locally:
+   ```
+   ./gradlew validateAnnouncements
+   ```
+   The task exits non-zero on any malformed file or duplicate id and
+   prints per-file violations. CI runs the same task.
+3. Cross-check against the authoring rubric in
    `docs/backend/announcements-endpoint.md` §2 / §4.
-3. Open a PR. Translators add `i18n` blocks to the same file.
-4. Deploy applies it -- there is no in-place hot reload.
+4. Open a PR. Translators add `i18n` blocks to the same file.
+5. Deploy applies it -- there is no in-place hot reload.
 
 ## Required fields
 
