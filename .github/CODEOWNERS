@@ -1,0 +1,10 @@
+# Maintainer review required for changes to:
+# - workflow files (production deploy logic + secrets handling)
+# - announcement content (user-facing trusted channel)
+#
+# Codeowner rules apply only when the matching branch ruleset has
+# "Require review from Code Owners" enabled. Without that, this file is
+# documentation only.
+
+/.github/                          @rainxchzed
+/src/main/resources/announcements/ @rainxchzed
