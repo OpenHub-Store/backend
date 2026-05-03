@@ -1,0 +1,12 @@
+{
+  "id": "2026-05-03-announcements-launched",
+  "publishedAt": "2026-05-03T00:00:00Z",
+  "expiresAt": "2026-08-03T00:00:00Z",
+  "severity": "INFO",
+  "category": "NEWS",
+  "title": "Announcements live",
+  "body": "GitHub Store now ships an in-app announcements channel for cross-version updates that don't fit a release. We use it sparingly -- privacy notices, surveys, occasional advocacy. You can mute categories you don't care about from the inbox top-right menu.",
+  "dismissible": true,
+  "requiresAcknowledgment": false,
+  "iconHint": "INFO"
+}
