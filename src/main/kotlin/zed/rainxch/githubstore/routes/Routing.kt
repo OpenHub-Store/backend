@@ -39,7 +39,7 @@ fun Application.configureRouting() {
 
     routing {
         route("/v1") {
-            healthRoutes(meilisearchClient)
+            healthRoutes(meilisearchClient, announcementsRegistry)
             rateLimit(RateLimitName("events")) {
                 eventRoutes(eventRepository)
             }

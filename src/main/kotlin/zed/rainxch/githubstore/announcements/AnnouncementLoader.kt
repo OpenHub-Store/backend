@@ -1,6 +1,5 @@
 package zed.rainxch.githubstore.announcements
 
-import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.net.URI
 import java.nio.file.FileSystem
@@ -15,8 +14,14 @@ import kotlin.io.path.readText
 // Reads announcement JSON files from a directory. Each file is one
 // AnnouncementDto. Source resolution order:
 //
-//   1. ANNOUNCEMENTS_DIR env var (filesystem path) -- ops override.
-//   2. Classpath resource directory `announcements/` -- baked into the JAR.
+//   1. explicitDir constructor arg (tests use this).
+//   2. ANNOUNCEMENTS_DIR env var (filesystem path).
+//      Dev-only: in prod the container rootfs is read_only=true (see
+//      docker-compose.prod.yml), so this env override has no effect at
+//      runtime unless an `app:` `tmpfs:` or `volumes:` mount is added in
+//      the prod compose file. The runtime path in production is the
+//      bundled classpath dir.
+//   3. Classpath resource directory `announcements/` -- baked into the JAR.
 //
 // Any individual file that fails to parse or validate is logged and dropped
 // (single-file failures must never take the whole feed offline). Cross-item
@@ -30,11 +35,6 @@ class AnnouncementLoader(
     private val explicitDir: Path? = null,
 ) {
     private val log = LoggerFactory.getLogger(AnnouncementLoader::class.java)
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = false
-    }
 
     fun load(): List<AnnouncementDto> {
         val resolvedDir = explicitDir
@@ -102,7 +102,7 @@ class AnnouncementLoader(
     private fun parseFile(file: Path): AnnouncementDto? {
         return try {
             val raw = file.readText()
-            val item = json.decodeFromString(AnnouncementDto.serializer(), raw)
+            val item = AnnouncementsJson.decodeFromString(AnnouncementDto.serializer(), raw)
             val errs = AnnouncementValidator.validate(item)
             if (errs.isNotEmpty()) {
                 log.warn("Dropping {} (invalid): {}", file.name, errs.joinToString("; "))

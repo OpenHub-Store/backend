@@ -1,6 +1,5 @@
 package zed.rainxch.githubstore.announcements
 
-import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -27,7 +26,6 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
 
-    val json = Json { ignoreUnknownKeys = true; isLenient = false }
     var failures = 0
     val items = mutableListOf<AnnouncementDto>()
 
@@ -46,7 +44,7 @@ fun main(args: Array<String>) {
                     return@forEach
                 }
                 val item = try {
-                    json.decodeFromString(AnnouncementDto.serializer(), raw)
+                    AnnouncementsJson.decodeFromString(AnnouncementDto.serializer(), raw)
                 } catch (e: Exception) {
                     System.err.println("$name: parse error: ${e.message}")
                     failures++

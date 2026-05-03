@@ -37,7 +37,7 @@ class AnnouncementsRoutesTest {
     private fun makeRegistry(dir: Path) = AnnouncementsRegistry(
         // explicitDir bypasses both the env var and the classpath fallback.
         loader = AnnouncementLoader(classpathDir = "__nonexistent__", explicitDir = dir),
-    )
+    ).also { it.start() }
 
     private fun tempDir(): Path = Files.createTempDirectory("announcements-test-")
 
@@ -191,6 +191,46 @@ class AnnouncementsRoutesTest {
                 header(HttpHeaders.IfNoneMatch, etag)
             }
             assertEquals(HttpStatusCode.NotModified, second.status)
+        } finally {
+            cleanup(dir)
+        }
+    }
+
+    @Test
+    fun `serve memoizes etag within the same minute for unchanged items`() {
+        val dir = tempDir()
+        try {
+            writeJson(dir, "x", validJson("x"))
+            val registry = makeRegistry(dir)
+            // Two calls inside the same minute return the same etag string.
+            // Use an explicit fixed `now` to remove flake on minute rollovers.
+            val now = Instant.parse("2026-06-15T12:30:00Z")
+            val first = registry.serve(now)
+            val second = registry.serve(now.plusSeconds(15))
+            assertEquals(first.etag, second.etag)
+            // Crossing into the next minute still yields the same etag string
+            // because the items haven't changed -- value equality is the
+            // contract; ref-equality of the cache is an implementation detail.
+            val nextMinute = registry.serve(now.plusSeconds(90))
+            assertEquals(first.etag, nextMinute.etag)
+        } finally {
+            cleanup(dir)
+        }
+    }
+
+    @Test
+    fun `loadedCount is zero before start`() {
+        val dir = tempDir()
+        try {
+            writeJson(dir, "x", validJson("x"))
+            val registry = AnnouncementsRegistry(
+                loader = AnnouncementLoader(classpathDir = "__nonexistent__", explicitDir = dir),
+            )
+            // Pre-start: no crash, empty payload, count of 0.
+            assertEquals(0, registry.loadedCount())
+            assertEquals(0, registry.serve().response.items.size)
+            registry.start()
+            assertEquals(1, registry.loadedCount())
         } finally {
             cleanup(dir)
         }

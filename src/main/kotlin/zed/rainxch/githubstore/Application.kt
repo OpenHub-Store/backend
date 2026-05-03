@@ -7,6 +7,7 @@ import io.sentry.Sentry
 import org.koin.ktor.ext.inject
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
+import zed.rainxch.githubstore.announcements.AnnouncementsRegistry
 import zed.rainxch.githubstore.db.DatabaseFactory
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.RetentionWorker
@@ -91,6 +92,13 @@ fun Application.module() {
 
     val mirrorStatusWorker by inject<MirrorStatusWorker>()
     mirrorStatusWorker.start()
+
+    // Synchronous load -- no coroutine. The set is small (handful of files
+    // bundled in the JAR) and we want the startup log line before serving.
+    // Pre-start, the registry returns an empty list, so a request that
+    // somehow lands here before this call is non-fatal.
+    val announcementsRegistry by inject<AnnouncementsRegistry>()
+    announcementsRegistry.start()
 
     val workerSupervisor by inject<WorkerSupervisor>()
     monitor.subscribe(ApplicationStopping) {

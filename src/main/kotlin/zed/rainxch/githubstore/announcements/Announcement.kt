@@ -1,6 +1,20 @@
 package zed.rainxch.githubstore.announcements
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+// Single source of truth for announcement JSON parsing. ignoreUnknownKeys lets
+// the schema grow forwards without breaking older deploys mid-rollout;
+// isLenient=false keeps strict-quotes behavior so a typo'd file fails loud at
+// load time instead of silently parsing as something else. The encodeDefaults
+// flag matters for ETag canonicalization -- two items that differ only in
+// "did the author write the default explicitly" must hash identically.
+internal val AnnouncementsJson: Json = Json {
+    ignoreUnknownKeys = true
+    isLenient = false
+    encodeDefaults = true
+    prettyPrint = false
+}
 
 // Wire format mirrors the client DTO verbatim. Field names use camelCase (NOT
 // the snake_case the rest of /v1 uses) because the contract in
