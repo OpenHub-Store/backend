@@ -192,6 +192,22 @@ class GitHubResourceClient(
             return Result.Hit(body, status, contentType)
         }
 
+        // 401 from upstream is treated as a transient upstream error rather
+        // than a NegativeHit. Two reasons:
+        //   1. The 401 reflects a user-token rejection, not a permanent
+        //      property of the resource — a user with a valid token would
+        //      succeed on the same URL. Caching it (even negatively) would
+        //      poison the slot for other tokens.
+        //   2. We reserve 401 in our own response surface for future
+        //      backend-auth needs; surfacing GitHub's 401 verbatim conflates
+        //      "your session with us expired" with "your PAT was rejected
+        //      upstream", which the client must distinguish.
+        // The route handler already maps UpstreamError -> 502.
+        if (status == 401) {
+            log.info("Upstream 401: url={} (remapped to 502)", upstreamUrl)
+            return Result.UpstreamError("upstream_401")
+        }
+
         // 404 / 410 / 451 / etc. Cache the negative response briefly so a
         // flood of requests for nonexistent repos can't burn our quota.
         if (status in 400..499) {
