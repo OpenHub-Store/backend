@@ -32,7 +32,17 @@ val appModule = module {
     single { MeilisearchClient() }
     single { GitHubSearchClient(get()) }
     single { GitHubDeviceClient() }
-    single { GitHubResourceClient(get()) }
+    single {
+        val searchClient: GitHubSearchClient = get()
+        GitHubResourceClient(
+            cacheRepository = get(),
+            // Share the rotation pool + quiet-window guarantee so resource-
+            // proxy routes (/repo, /releases, /readme, /user) follow the
+            // same token policy as /search.
+            fallbackTokenProvider = searchClient::pickFallbackToken,
+            isQuietWindow = searchClient::isQuietWindowNow,
+        )
+    }
     single { WorkerSupervisor() }
     single { SignalAggregationWorker(get(), get()) }
     single { RepoRefreshWorker(get(), get()) }

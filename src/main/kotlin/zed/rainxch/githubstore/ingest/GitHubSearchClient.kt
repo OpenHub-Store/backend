@@ -70,7 +70,11 @@ class GitHubSearchClient(
     private val quietEndUtcHour: Int =
         System.getenv("TOKEN_QUIET_END_UTC")?.toIntOrNull() ?: 4
 
-    private fun isQuietWindowNow(): Boolean {
+    // Exposed (internal) so cross-class callers in the same module
+    // (GitHubResourceClient via AppModule) can mirror the quiet-window
+    // guarantee without duplicating the env-var parsing or the wrap-midnight
+    // arithmetic.
+    internal fun isQuietWindowNow(): Boolean {
         val h = OffsetDateTime.now(ZoneOffset.UTC).hour
         return if (quietStartUtcHour <= quietEndUtcHour) {
             h in quietStartUtcHour until quietEndUtcHour

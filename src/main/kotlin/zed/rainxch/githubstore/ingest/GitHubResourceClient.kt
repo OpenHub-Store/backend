@@ -15,10 +15,18 @@ import java.util.concurrent.ConcurrentHashMap
 
 class GitHubResourceClient(
     private val cacheRepository: ResourceCacheRepository,
+    // Rotation-pool token selector. Wired from AppModule to GitHubSearchClient's
+    // pickFallbackToken so resource-proxy routes (/repo, /releases, /readme,
+    // /user) share the same 4-token pool and the same fetcher quiet-window
+    // guarantee. Null is allowed for tests; in that case anonymous calls are
+    // made when the user doesn't supply X-GitHub-Token.
+    private val fallbackTokenProvider: (() -> String?)? = null,
+    // Returns true when the daily fetcher's quiet window is active. During
+    // that window we never substitute a pool token for a rate-limited user
+    // token — the pool belongs to the fetcher then.
+    private val isQuietWindow: () -> Boolean = { false },
 ) {
     private val log = LoggerFactory.getLogger(GitHubResourceClient::class.java)
-
-    private val fallbackTokenProvider: (() -> String?)? = null
 
     private val http = HttpClient(CIO) {
         install(HttpTimeout) {
