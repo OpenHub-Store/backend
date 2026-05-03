@@ -116,24 +116,46 @@ class GitHubResourceClient(
         existingStatus: Int?,
         existingContentType: String?,
     ): Result {
-        val token = userToken ?: fallbackTokenProvider?.invoke()
+        val firstToken = userToken ?: fallbackTokenProvider?.invoke()
+        val first = attemptUpstream(upstreamUrl, firstToken, acceptHeader, existingEtag)
 
-        val response = try {
-            http.get(upstreamUrl) {
-                header(HttpHeaders.Accept, acceptHeader)
-                header(HttpHeaders.UserAgent, "GithubStoreBackend/1.0 (ResourceProxy)")
-                if (token != null) header(HttpHeaders.Authorization, "token $token")
-                if (existingEtag != null) header(HttpHeaders.IfNoneMatch, existingEtag)
+        // Retry once with the fallback pool if the first attempt was made with
+        // a user-supplied token that GitHub rate-limited. Skipped during the
+        // fetcher's quiet window so the pool stays free for the daily run —
+        // during that window a rate-limited user token is surfaced verbatim.
+        // Anonymous-IP rate-limits (no user token) also benefit when a pool
+        // token is available outside the quiet window.
+        val response = if (
+            first is AttemptResult.Limited &&
+            !isQuietWindow() &&
+            fallbackTokenProvider != null
+        ) {
+            val poolToken = fallbackTokenProvider.invoke()
+            // If pool token equals the token we just used (e.g. user supplied
+            // the same PAT, or pool only contains GITHUB_TOKEN), retrying is
+            // pointless — the same key is already exhausted.
+            if (poolToken != null && poolToken != firstToken) {
+                log.info("Retrying rate-limited upstream call with fallback pool: url={}", upstreamUrl)
+                when (val retry = attemptUpstream(upstreamUrl, poolToken, acceptHeader, existingEtag)) {
+                    is AttemptResult.Ok -> retry.response
+                    is AttemptResult.NetworkError -> {
+                        if (existingBody != null && existingStatus in 200..299) {
+                            return Result.StaleFallback(existingBody, existingStatus!!, existingContentType ?: contentType)
+                        }
+                        return Result.UpstreamError(retry.message)
+                    }
+                    is AttemptResult.Limited -> retry.response
+                }
+            } else first.response
+        } else when (first) {
+            is AttemptResult.Ok -> first.response
+            is AttemptResult.Limited -> first.response
+            is AttemptResult.NetworkError -> {
+                if (existingBody != null && existingStatus in 200..299) {
+                    return Result.StaleFallback(existingBody, existingStatus!!, existingContentType ?: contentType)
+                }
+                return Result.UpstreamError(first.message)
             }
-        } catch (e: Exception) {
-            // Network/timeout. If we have a stale-but-usable cached copy, serve
-            // it — better to return stale data than to 502 when the client
-            // just wants to render a Details screen.
-            log.warn("Upstream fetch failed: url={} err={}", upstreamUrl, e.message)
-            if (existingBody != null && existingStatus in 200..299) {
-                return Result.StaleFallback(existingBody, existingStatus!!, existingContentType ?: contentType)
-            }
-            return Result.UpstreamError(e.message ?: "unknown")
         }
 
         val status = response.status.value
@@ -179,6 +201,55 @@ class GitHubResourceClient(
             return Result.StaleFallback(existingBody, existingStatus!!, existingContentType ?: contentType)
         }
         return Result.UpstreamError("upstream $status")
+    }
+
+    private suspend fun attemptUpstream(
+        upstreamUrl: String,
+        token: String?,
+        acceptHeader: String,
+        existingEtag: String?,
+    ): AttemptResult {
+        val response = try {
+            http.get(upstreamUrl) {
+                header(HttpHeaders.Accept, acceptHeader)
+                header(HttpHeaders.UserAgent, "GithubStoreBackend/1.0 (ResourceProxy)")
+                if (token != null) header(HttpHeaders.Authorization, "token $token")
+                if (existingEtag != null) header(HttpHeaders.IfNoneMatch, existingEtag)
+            }
+        } catch (e: Exception) {
+            log.warn("Upstream fetch failed: url={} err={}", upstreamUrl, e.message)
+            return AttemptResult.NetworkError(e.message ?: "unknown")
+        }
+        return if (isRateLimited(response.status.value, response.headers)) {
+            AttemptResult.Limited(response)
+        } else {
+            AttemptResult.Ok(response)
+        }
+    }
+
+    // GitHub rate-limit detection. Two surfaces matter here:
+    //   * Primary rate limit: 403 with `x-ratelimit-remaining: 0`. Resets
+    //     hourly per token (or per IP when anonymous).
+    //   * Secondary / abuse rate limit: 429 (newer responses) or 403 with a
+    //     `retry-after` header (older responses) — bursts that trip GitHub's
+    //     anti-abuse heuristics independent of the hourly budget.
+    // A bare 403 without these markers is something else (auth scope, blocked
+    // repo) and must NOT trigger a pool retry — the same pool token would hit
+    // the same wall.
+    private fun isRateLimited(status: Int, headers: io.ktor.http.Headers): Boolean {
+        if (status == 429) return true
+        if (status == 403) {
+            val remaining = headers["x-ratelimit-remaining"]
+            if (remaining == "0") return true
+            if (headers["retry-after"] != null) return true
+        }
+        return false
+    }
+
+    private sealed class AttemptResult {
+        data class Ok(val response: io.ktor.client.statement.HttpResponse) : AttemptResult()
+        data class Limited(val response: io.ktor.client.statement.HttpResponse) : AttemptResult()
+        data class NetworkError(val message: String) : AttemptResult()
     }
 
     sealed class Result {

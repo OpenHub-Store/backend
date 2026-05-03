@@ -111,6 +111,47 @@ class GitHubSearchClient(
             connectTimeoutMillis = 5_000
             socketTimeoutMillis = 15_000
         }
+        expectSuccess = false
+    }
+
+    // Single point of truth for outbound GitHub calls: applies the right
+    // Authorization header, makes the call, and on a rate-limited response
+    // retries once with a different pool token when conditions allow.
+    //
+    // Retry conditions: outside the fetcher quiet window, and only when a
+    // different pool token is available than the one that just got limited.
+    // During the quiet window the pool belongs to the daily fetcher — a rate
+    // limit is surfaced verbatim instead.
+    private suspend fun githubGet(
+        url: String,
+        userToken: String?,
+        configure: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {},
+    ): io.ktor.client.statement.HttpResponse {
+        val firstToken = userToken ?: pickFallbackToken()
+        val first = client.get(url) {
+            header("Accept", "application/vnd.github+json")
+            if (firstToken != null) header("Authorization", "token $firstToken")
+            configure()
+        }
+        if (!isRateLimited(first.status.value, first.headers)) return first
+        if (isQuietWindowNow()) return first
+        val retryToken = pickFallbackToken()
+        if (retryToken == null || retryToken == firstToken) return first
+        log.info("Retrying rate-limited GitHub call with fallback pool: url={}", url)
+        return client.get(url) {
+            header("Accept", "application/vnd.github+json")
+            header("Authorization", "token $retryToken")
+            configure()
+        }
+    }
+
+    private fun isRateLimited(status: Int, headers: io.ktor.http.Headers): Boolean {
+        if (status == 429) return true
+        if (status == 403) {
+            if (headers["x-ratelimit-remaining"] == "0") return true
+            if (headers["retry-after"] != null) return true
+        }
+        return false
     }
 
     // Persistence happens off the request path: respond to the user with the enriched
@@ -202,14 +243,13 @@ class GitHubSearchClient(
 
         return try {
             coldQueryGate.withPermit {
-                val token = userToken ?: pickFallbackToken()
-                var withInstallers = runPass(query, platform, limit, token, nameMatch = false)
+                var withInstallers = runPass(query, platform, limit, userToken, nameMatch = false)
                 // When the stars-sorted pass yields nothing installable, try an
                 // in:name pass. Lets genuinely niche literal-name matches (e.g. a
                 // 12-star app whose repo IS the query) surface past the library
                 // projects that dominate general best-match rankings.
                 if (withInstallers.isEmpty()) {
-                    withInstallers = runPass(query, platform, limit, token, nameMatch = true)
+                    withInstallers = runPass(query, platform, limit, userToken, nameMatch = true)
                 }
                 if (withInstallers.isEmpty()) return@withPermit SearchOutcome.NoMatches
 
@@ -248,9 +288,8 @@ class GitHubSearchClient(
             }
 
             return coldQueryGate.withPermit {
-                val token = userToken ?: pickFallbackToken()
                 // Fetch 10 repos per page, require 5+ stars to filter abandoned junk
-                val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, token = token)
+                val repos = searchGitHub(query, limit = 10, page = page, minStars = 5, userToken = userToken)
                 if (repos.isEmpty()) return@withPermit ExploreResult(emptyList(), hasMore = false)
 
                 val filtered = repos.filter { repo ->
@@ -260,7 +299,7 @@ class GitHubSearchClient(
                 val withInstallers = coroutineScope {
                     filtered.map { repo ->
                         async {
-                            val releases = fetchAllReleases(repo.fullName, token)
+                            val releases = fetchAllReleases(repo.fullName, userToken)
                             val latest = releases.firstOrNull { !it.draft && !it.prerelease }
                                 ?: return@async null
                             val platformFlags = detectPlatforms(latest)
@@ -301,7 +340,7 @@ class GitHubSearchClient(
         query: String,
         platform: String?,
         limit: Int,
-        token: String?,
+        userToken: String?,
         nameMatch: Boolean,
     ): List<RepoWithRelease> {
         if (FeatureFlags.disableLiveGitHubPassthrough) return emptyList()
@@ -314,7 +353,7 @@ class GitHubSearchClient(
             limit = 10,
             page = 1,
             minStars = if (nameMatch) 5 else 10,
-            token = token,
+            userToken = userToken,
             nameMatch = nameMatch,
         )
         if (repos.isEmpty()) return emptyList()
@@ -322,7 +361,7 @@ class GitHubSearchClient(
         return coroutineScope {
             candidates.map { repo ->
                 async {
-                    val releases = fetchAllReleases(repo.fullName, token)
+                    val releases = fetchAllReleases(repo.fullName, userToken)
                     val latest = releases.firstOrNull { !it.draft && !it.prerelease }
                         ?: return@async null
                     val platformFlags = detectPlatforms(latest)
@@ -340,7 +379,7 @@ class GitHubSearchClient(
         limit: Int,
         page: Int = 1,
         minStars: Int = 10,
-        token: String? = pickFallbackToken(),
+        userToken: String? = null,
         nameMatch: Boolean = false,
     ): List<GitHubRepo> {
         val qParts = buildList {
@@ -349,7 +388,7 @@ class GitHubSearchClient(
             add("stars:>=$minStars")
             add("fork:true")
         }
-        val response = client.get("https://api.github.com/search/repositories") {
+        val response = githubGet("https://api.github.com/search/repositories", userToken) {
             // fork:true includes both forks and non-forks.
             // Abandoned forks get filtered out later by installer release + star checks.
             parameter("q", qParts.joinToString(" "))
@@ -359,10 +398,6 @@ class GitHubSearchClient(
             if (!nameMatch) parameter("sort", "stars")
             parameter("per_page", limit)
             parameter("page", page)
-            header("Accept", "application/vnd.github+json")
-            if (token != null) {
-                header("Authorization", "token $token")
-            }
         }
 
         if (response.status != HttpStatusCode.OK) return emptyList()
@@ -373,16 +408,13 @@ class GitHubSearchClient(
     // 3 pages (300 releases) — the long tail of older download counts past
     // that is rounding noise for ranking, and the cap keeps a single cold
     // query from dispatching ~50 GitHub API calls per candidate.
-    private suspend fun fetchAllReleases(fullName: String, token: String? = pickFallbackToken()): List<GitHubRelease> {
+    private suspend fun fetchAllReleases(fullName: String, userToken: String? = null): List<GitHubRelease> {
         val out = mutableListOf<GitHubRelease>()
         var url: String? = "https://api.github.com/repos/$fullName/releases?per_page=100"
         var pages = 0
         while (url != null && pages < 3) {
             try {
-                val response = client.get(url) {
-                    header("Accept", "application/vnd.github+json")
-                    if (token != null) header("Authorization", "token $token")
-                }
+                val response = githubGet(url, userToken)
                 if (response.status != HttpStatusCode.OK) break
                 out += response.body<List<GitHubRelease>>()
                 url = parseNextLink(response.headers["Link"])
@@ -404,13 +436,10 @@ class GitHubSearchClient(
     // Re-fetch an existing repo's metadata + releases for RepoRefreshWorker.
     // Returns null if the repo is gone (404), archived, or has no installable
     // release — the caller uses that to soft-delete / mark stale.
-    internal suspend fun refreshRepo(fullName: String, token: String? = pickFallbackToken()): RefreshResult {
+    internal suspend fun refreshRepo(fullName: String, userToken: String? = null): RefreshResult {
         if (FeatureFlags.disableLiveGitHubPassthrough) return RefreshResult.TransientFailure
         val metaResponse = try {
-            client.get("https://api.github.com/repos/$fullName") {
-                header("Accept", "application/vnd.github+json")
-                if (token != null) header("Authorization", "token $token")
-            }
+            githubGet("https://api.github.com/repos/$fullName", userToken)
         } catch (_: Exception) {
             return RefreshResult.TransientFailure
         }
@@ -419,7 +448,7 @@ class GitHubSearchClient(
         val repo = metaResponse.body<GitHubRepo>()
         if (repo.archived || repo.disabled) return RefreshResult.Archived
 
-        val releases = fetchAllReleases(fullName, token)
+        val releases = fetchAllReleases(fullName, userToken)
         val latest = releases.firstOrNull { !it.draft && !it.prerelease }
             ?: return RefreshResult.NoUsableRelease(repo)
         val platformFlags = detectPlatforms(latest)
