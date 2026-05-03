@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel an in-flight PR run when the author pushes a new commit; main runs
+# never cancel each other.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,7 +37,10 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
 
       - name: Compile
-        run: ./gradlew compileKotlin --no-daemon
+        run: ./gradlew compileKotlin compileTestKotlin --no-daemon
+
+      - name: Validate announcements
+        run: ./gradlew validateAnnouncements --no-daemon
 
       - name: Test
         run: ./gradlew test --no-daemon
