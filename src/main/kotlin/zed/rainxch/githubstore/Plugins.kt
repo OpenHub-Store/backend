@@ -68,6 +68,23 @@ private fun forwardedFor(call: io.ktor.server.application.ApplicationCall): Stri
         .orEmpty()
         .ifEmpty { "unknown" }
 
+// Key function for the search bucket (covers /search, /search/explore,
+// /releases, /readme, /user — all the upstream-passthrough routes). Behind a
+// CDN POP, IP-only keying collapses every user behind one regional POP into
+// a single 60/min slot. Keying by a hash of the user's X-GitHub-Token when
+// present spreads the limit per-user instead. Anonymous callers still share
+// by IP (correct — no token to distinguish them). The hash uses the same
+// HmacSHA256(pepper, ...) that hashes device IDs; truncated to 16 hex chars
+// to keep rate-limit bucket keys short. Token contents never appear in logs.
+private fun searchBucketKey(call: io.ktor.server.application.ApplicationCall): String {
+    val token = call.request.headers["X-GitHub-Token"]?.takeIf { it.isNotBlank() }
+    return if (token != null) {
+        "tok:${zed.rainxch.githubstore.util.PrivacyHash.hash(token).take(16)}"
+    } else {
+        "ip:${forwardedFor(call)}"
+    }
+}
+
 fun Application.configureHTTP() {
     install(DefaultHeaders) {
         header("X-Engine", "github-store-backend")
@@ -150,10 +167,13 @@ fun Application.configureHTTP() {
             rateLimiter(limit = 3, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
-        // Search: moderate (60 per minute) — on-demand GitHub calls are expensive
+        // Search bucket: 60/min/key. Covers /search, /search/explore,
+        // /releases, /readme, /user — every route that fans out to the
+        // GitHub API. Keyed by token-hash when present, IP otherwise (see
+        // searchBucketKey for rationale).
         register(RateLimitName("search")) {
             rateLimiter(limit = 60, refillPeriod = 1.minutes)
-            requestKey(::forwardedFor)
+            requestKey(::searchBucketKey)
         }
         // Badges: 60/min/IP. Embedded in READMEs so a single popular repo can
         // generate steady traffic; the limit is per-viewer-IP, not per-repo.
