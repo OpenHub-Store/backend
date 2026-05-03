@@ -51,8 +51,16 @@ class GitHubResourceClient(
         contentType: String = "application/json",
         acceptHeader: String = "application/vnd.github+json",
     ): Result {
+        // Segment storage by whether the upstream call carries a user token.
+        // Without this, one user's bad-PAT 403 would poison the cache for
+        // every subsequent caller (including those with a valid token) until
+        // the negative TTL elapsed. The two slots are populated and read
+        // independently — anon callers never read an authed cache entry and
+        // vice versa.
+        val effectiveKey = effectiveCacheKey(cacheKey, userToken)
+
         // Fresh cache hit — no upstream call, no lock.
-        cacheRepository.get(cacheKey)?.let { existing ->
+        cacheRepository.get(effectiveKey)?.let { existing ->
             if (existing.isFresh()) {
                 return if (existing.status in 200..299) {
                     Result.Hit(existing.body, existing.status, existing.contentType)
@@ -68,11 +76,11 @@ class GitHubResourceClient(
         }
 
         // Stale or missing — serialize per-key to avoid thundering herd.
-        val mutex = fetchLocks.computeIfAbsent(cacheKey) { Mutex() }
+        val mutex = fetchLocks.computeIfAbsent(effectiveKey) { Mutex() }
         try {
             return mutex.withLock {
                 // Re-check after acquiring: another waiter may have just refreshed it.
-                val afterLock = cacheRepository.get(cacheKey)
+                val afterLock = cacheRepository.get(effectiveKey)
                 if (afterLock != null && afterLock.isFresh()) {
                     return@withLock if (afterLock.status in 200..299) {
                         Result.Hit(afterLock.body, afterLock.status, afterLock.contentType)
@@ -82,7 +90,7 @@ class GitHubResourceClient(
                 }
 
                 fetchFromUpstream(
-                    cacheKey = cacheKey,
+                    cacheKey = effectiveKey,
                     upstreamUrl = upstreamUrl,
                     userToken = userToken,
                     ttlSeconds = ttlSeconds,
@@ -99,9 +107,12 @@ class GitHubResourceClient(
             // Reclaim the per-key mutex so the map doesn't grow unbounded.
             // remove(key, value) is a no-op if a concurrent waiter has already
             // installed a new mutex for this key — safe under contention.
-            fetchLocks.remove(cacheKey, mutex)
+            fetchLocks.remove(effectiveKey, mutex)
         }
     }
+
+    private fun effectiveCacheKey(cacheKey: String, userToken: String?): String =
+        if (userToken != null) "$cacheKey|authed" else "$cacheKey|anon"
 
     private suspend fun fetchFromUpstream(
         cacheKey: String,
