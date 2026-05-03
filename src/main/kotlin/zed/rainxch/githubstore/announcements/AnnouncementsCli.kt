@@ -45,6 +45,7 @@ fun main(args: Array<String>) {
                 }
                 val item = try {
                     AnnouncementsJson.decodeFromString(AnnouncementDto.serializer(), raw)
+                        .normalizeOptionals()
                 } catch (e: Exception) {
                     System.err.println("$name: parse error: ${e.message}")
                     failures++

@@ -102,7 +102,8 @@ class AnnouncementLoader(
     private fun parseFile(file: Path): AnnouncementDto? {
         return try {
             val raw = file.readText()
-            val item = AnnouncementsJson.decodeFromString(AnnouncementDto.serializer(), raw)
+            val parsed = AnnouncementsJson.decodeFromString(AnnouncementDto.serializer(), raw)
+            val item = parsed.normalizeOptionals()
             val errs = AnnouncementValidator.validate(item)
             if (errs.isNotEmpty()) {
                 log.warn("Dropping {} (invalid): {}", file.name, errs.joinToString("; "))

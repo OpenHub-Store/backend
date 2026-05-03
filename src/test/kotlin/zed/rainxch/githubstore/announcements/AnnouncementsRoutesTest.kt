@@ -237,6 +237,37 @@ class AnnouncementsRoutesTest {
     }
 
     @Test
+    fun `empty-string optionals are normalized to null at load`() = testApplication {
+        // Decap CMS writes "" for unset optional fields. The loader normalizes
+        // those to null so the validator accepts them and the served JSON
+        // doesn't echo "" back to clients.
+        val dir = tempDir()
+        try {
+            dir.resolve("decap.json").writeText(
+                """{"id":"decap","publishedAt":"2026-06-15T00:00:00Z","severity":"INFO",""" +
+                    """"category":"NEWS","title":"From Decap","body":"${"B".repeat(60)}",""" +
+                    """"expiresAt":"","iconHint":"","ctaUrl":"","ctaLabel":""}""",
+            )
+            setupApp(makeRegistry(dir))
+            val resp = client.get("/v1/announcements")
+            assertEquals(HttpStatusCode.OK, resp.status)
+            val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+            val items = body["items"]!!.jsonArray
+            assertEquals(1, items.size)
+            val item = items[0].jsonObject
+            // Each optional must serialize as JSON null (not echoed empty
+            // string) since encodeDefaults=true emits the field but with
+            // null value after normalization.
+            assertEquals("null", item["expiresAt"].toString())
+            assertEquals("null", item["iconHint"].toString())
+            assertEquals("null", item["ctaUrl"].toString())
+            assertEquals("null", item["ctaLabel"].toString())
+        } finally {
+            cleanup(dir)
+        }
+    }
+
+    @Test
     fun `weak prefix on incoming etag still matches`() = testApplication {
         val dir = tempDir()
         try {

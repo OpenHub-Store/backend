@@ -58,18 +58,20 @@ object AnnouncementValidator {
         // Locale-aware length checks. Defaults are checked against EN; each
         // i18n variant is checked independently because translators can
         // overrun even when the source is in budget.
-        validateText(label = "title", value = item.title, min = 1, max = TITLE_MAX)?.let(errs::add)
-        validateText(label = "body", value = item.body, min = BODY_MIN, max = BODY_MAX)?.let(errs::add)
+        // Body is multi-line (\n / \r / \t allowed); title and ctaLabel are
+        // single-line so control chars including newlines are rejected.
+        validateText(label = "title", value = item.title, min = 1, max = TITLE_MAX, multiline = false)?.let(errs::add)
+        validateText(label = "body", value = item.body, min = BODY_MIN, max = BODY_MAX, multiline = true)?.let(errs::add)
         item.ctaLabel?.let {
-            validateText(label = "ctaLabel", value = it, min = 1, max = CTA_LABEL_MAX)?.let(errs::add)
+            validateText(label = "ctaLabel", value = it, min = 1, max = CTA_LABEL_MAX, multiline = false)?.let(errs::add)
         }
 
         item.i18n.forEach { (locale, variant) ->
             if (!BCP47.matches(locale)) errs += "i18n.$locale: not a BCP-47 code"
-            variant.title?.let { validateText("i18n.$locale.title", it, 1, TITLE_MAX)?.let(errs::add) }
-            variant.body?.let { validateText("i18n.$locale.body", it, BODY_MIN, BODY_MAX)?.let(errs::add) }
+            variant.title?.let { validateText("i18n.$locale.title", it, 1, TITLE_MAX, multiline = false)?.let(errs::add) }
+            variant.body?.let { validateText("i18n.$locale.body", it, BODY_MIN, BODY_MAX, multiline = true)?.let(errs::add) }
             variant.ctaLabel?.let {
-                validateText("i18n.$locale.ctaLabel", it, 1, CTA_LABEL_MAX)?.let(errs::add)
+                validateText("i18n.$locale.ctaLabel", it, 1, CTA_LABEL_MAX, multiline = false)?.let(errs::add)
             }
             variant.ctaUrl?.let { if (!it.startsWith("https://")) errs += "i18n.$locale.ctaUrl: must be https://" }
         }
@@ -100,15 +102,33 @@ object AnnouncementValidator {
         else "duplicate ids: $dupes"
     }
 
-    private fun validateText(label: String, value: String, min: Int, max: Int): String? {
+    private fun validateText(
+        label: String,
+        value: String,
+        min: Int,
+        max: Int,
+        multiline: Boolean,
+    ): String? {
         val len = value.length
         return when {
             len < min -> "$label: < $min chars (was $len)"
             len > max -> "$label: > $max chars (was $len)"
-            value.any { it.isISOControl() } -> "$label: contains control character"
+            value.any { it.isDangerousControl(multiline) } -> "$label: contains control character"
             BIDI_OVERRIDE.containsMatchIn(value) -> "$label: contains bidi override character"
             else -> null
         }
+    }
+
+    // Multi-line fields (body / per-locale body) accept printable whitespace --
+    // \n \r \t -- because the admin panel surfaces a textarea and the client
+    // renders body as plain text with newlines preserved. All other ISO control
+    // characters (NULL, escape, vertical-tab, etc.) remain rejected as
+    // UI-spoofing / log-injection vectors. Single-line fields (title, ctaLabel)
+    // reject every control char.
+    private fun Char.isDangerousControl(multiline: Boolean): Boolean {
+        if (!isISOControl()) return false
+        if (multiline && (this == '\n' || this == '\r' || this == '\t')) return false
+        return true
     }
 
     private fun isIso8601(value: String): Boolean = try {

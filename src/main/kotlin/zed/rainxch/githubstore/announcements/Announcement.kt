@@ -56,3 +56,24 @@ data class AnnouncementsResponse(
     val fetchedAt: String,
     val items: List<AnnouncementDto>,
 )
+
+// CMS form serializers (Decap, NetlifyCMS, etc.) commonly emit "" for unset
+// optional string fields instead of omitting them. Treat blank optionals as
+// null so the validator + downstream code see absence consistently and so the
+// served JSON drops the field rather than echoing an empty string back to
+// clients. Called by both the runtime loader and the validateAnnouncements
+// CLI so authors get the same answer locally as the runtime gets.
+internal fun AnnouncementDto.normalizeOptionals(): AnnouncementDto = copy(
+    expiresAt = expiresAt?.takeIf { it.isNotBlank() },
+    ctaUrl = ctaUrl?.takeIf { it.isNotBlank() },
+    ctaLabel = ctaLabel?.takeIf { it.isNotBlank() },
+    iconHint = iconHint?.takeIf { it.isNotBlank() },
+    i18n = i18n.mapValues { (_, v) ->
+        v.copy(
+            title = v.title?.takeIf { it.isNotBlank() },
+            body = v.body?.takeIf { it.isNotBlank() },
+            ctaUrl = v.ctaUrl?.takeIf { it.isNotBlank() },
+            ctaLabel = v.ctaLabel?.takeIf { it.isNotBlank() },
+        )
+    },
+)

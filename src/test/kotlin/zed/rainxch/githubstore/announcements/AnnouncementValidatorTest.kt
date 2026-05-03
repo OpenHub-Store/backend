@@ -214,8 +214,27 @@ class AnnouncementValidatorTest {
     }
 
     @Test
-    fun `body with tab rejected`() {
-        val errs = AnnouncementValidator.validate(valid(body = "B".repeat(30) + "\t" + "B".repeat(30)))
+    fun `body with newline accepted`() {
+        // Body is multi-line; \n / \r / \t are allowed because the admin panel
+        // surfaces a textarea and the client renders body as plain text with
+        // newlines preserved.
+        assertEquals(
+            emptyList(),
+            AnnouncementValidator.validate(valid(body = "B".repeat(30) + "\nline2 " + "B".repeat(20))),
+        )
+    }
+
+    @Test
+    fun `body with tab and carriage return accepted`() {
+        assertEquals(
+            emptyList(),
+            AnnouncementValidator.validate(valid(body = "B".repeat(30) + "\t\r\n" + "B".repeat(20))),
+        )
+    }
+
+    @Test
+    fun `body with NULL char still rejected`() {
+        val errs = AnnouncementValidator.validate(valid(body = "B".repeat(30) + " " + "B".repeat(30)))
         assertTrue(errs.any { it.contains("body:") && it.contains("control") })
     }
 
