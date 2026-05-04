@@ -64,14 +64,34 @@ internal class RepoRefreshCoordinator(
         val key = "$owner/$name".lowercase()
         val now = Instant.now()
 
-        // Cooldown gate.
-        val last = lastRefreshAt[key]
-        if (last != null) {
-            val secondsSince = Duration.between(last, now).seconds
-            if (secondsSince < cooldownSeconds) {
-                return Outcome.Cooldown(retryAfterSeconds = cooldownSeconds - secondsSince)
+        // Atomic cooldown claim. Two concurrent callers can both read an
+        // expired (or absent) timestamp and both write `now` if the read,
+        // check, and write are separate steps -- a TOCTOU race that lets
+        // both calls pass the gate and fire two upstream requests for one
+        // user click. ConcurrentHashMap.compute serialises the inspect +
+        // update under the per-bin lock, so only the first caller wins
+        // the claim; the second sees the just-written timestamp and falls
+        // into the cooldown branch.
+        //
+        // The claim runs BEFORE the budget gate so a budget-exhausted
+        // request still occupies its cooldown slot. Without that, a
+        // spam-retry pattern could bypass cooldown entirely by relying on
+        // budget rejections (which leave the slot free).
+        var cooldownRemainder: Long? = null
+        lastRefreshAt.compute(key) { _, existing ->
+            if (existing != null) {
+                val secondsSince = Duration.between(existing, now).seconds
+                if (secondsSince < cooldownSeconds) {
+                    cooldownRemainder = cooldownSeconds - secondsSince
+                    existing
+                } else {
+                    now
+                }
+            } else {
+                now
             }
         }
+        cooldownRemainder?.let { return Outcome.Cooldown(retryAfterSeconds = it) }
 
         // Budget gate. Reset the window first if it's stale.
         rotateBudgetIfStale(now)
@@ -82,8 +102,6 @@ internal class RepoRefreshCoordinator(
             return Outcome.BudgetExhausted(retryAfterSeconds = secondsUntilReset)
         }
 
-        // Mark BEFORE the call so concurrent callers see the cooldown.
-        lastRefreshAt[key] = now
         pruneStaleEntriesOpportunistically(now)
 
         return when (val result = refreshUpstream("$owner/$name", userToken)) {

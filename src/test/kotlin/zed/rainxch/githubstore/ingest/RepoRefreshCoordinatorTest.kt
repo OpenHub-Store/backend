@@ -1,5 +1,9 @@
 package zed.rainxch.githubstore.ingest
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import zed.rainxch.githubstore.ingest.GitHubSearchClient.RefreshResult
 import zed.rainxch.githubstore.ingest.GitHubSearchClient.RepoWithRelease
@@ -150,6 +154,54 @@ class RepoRefreshCoordinatorTest {
         assertTrue(outcome is RepoRefreshCoordinator.Outcome.Ok)
         assertEquals(false, outcome.metadataPersisted)
         assertEquals(0, persistCalls.get(), "metadata-only path must not persist")
+    }
+
+    @Test
+    fun `concurrent calls for same repo only one claims, others see Cooldown`() = runBlocking {
+        // Stress the TOCTOU window: many coroutines hit the cooldown gate
+        // for the same key simultaneously. Without atomic claim via
+        // ConcurrentHashMap.compute, multiple would pass the gate and the
+        // upstream call count would equal the coroutine count.
+        val refreshCalls = AtomicInteger(0)
+        val coord = RepoRefreshCoordinator(
+            refreshUpstream = { _, _ ->
+                refreshCalls.incrementAndGet()
+                // Small delay so concurrency window is realistic.
+                delay(5)
+                RefreshResult.Ok(fakeRepoWithRelease())
+            },
+            persistFn = { },
+            cooldownSeconds = 60L,
+            budgetPerHour = 100,
+        )
+        val outcomes = coroutineScope {
+            (1..32).map { async { coord.refresh("foo", "bar", null) } }.awaitAll()
+        }
+        val okCount = outcomes.count { it is RepoRefreshCoordinator.Outcome.Ok }
+        val cooldownCount = outcomes.count { it is RepoRefreshCoordinator.Outcome.Cooldown }
+        assertEquals(1, okCount, "exactly one caller may claim the slot under concurrency")
+        assertEquals(31, cooldownCount, "every other caller must see Cooldown")
+        assertEquals(1, refreshCalls.get(), "upstream must only be called once")
+    }
+
+    @Test
+    fun `budget exhausted still occupies cooldown slot`() = runBlocking {
+        // Budget=0 forces every call to fail at the budget gate. Subsequent
+        // calls within the cooldown window must see Cooldown rather than
+        // bypass the gate by relying on the budget rejection.
+        val coord = RepoRefreshCoordinator(
+            refreshUpstream = { _, _ -> RefreshResult.Ok(fakeRepoWithRelease()) },
+            persistFn = { },
+            cooldownSeconds = 60L,
+            budgetPerHour = 0,
+        )
+        val first = coord.refresh("foo", "bar", null)
+        assertTrue(first is RepoRefreshCoordinator.Outcome.BudgetExhausted)
+        val second = coord.refresh("foo", "bar", null)
+        assertTrue(
+            second is RepoRefreshCoordinator.Outcome.Cooldown,
+            "spam-retry after budget exhaustion must still hit cooldown, not bypass it",
+        )
     }
 
     @Test
