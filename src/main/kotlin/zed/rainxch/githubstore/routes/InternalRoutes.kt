@@ -13,13 +13,16 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNull
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
 import zed.rainxch.githubstore.db.Repos
+import zed.rainxch.githubstore.ingest.GitHubRepo
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
@@ -203,9 +206,9 @@ private suspend fun runBackfill(
     val pacePerRepoMs: Long = (System.getenv("REPO_REFRESH_PACE_MS")?.toLongOrNull() ?: 500L)
         .coerceAtLeast(0L)
     var ok = 0
+    var metadataOnly = 0
     var gone = 0
     var archived = 0
-    var stale = 0
     var failed = 0
     for ((_, fullName) in candidates) {
         // Quiet-window guard: pause the loop, don't burn the candidate.
@@ -219,7 +222,14 @@ private suspend fun runBackfill(
                 ok++
             }
             is GitHubSearchClient.RefreshResult.NoUsableRelease -> {
-                stale++
+                // Repo metadata fetched fine but has no installable release.
+                // The full persist path requires release info, so update the
+                // drift-prone metadata columns directly. Otherwise these rows
+                // would stay at default open_issues=0 / NULL license forever
+                // and re-appear in every subsequent backfill query -- the
+                // exact failure mode that prompted this fix.
+                upsertMetadataOnly(result.repo)
+                metadataOnly++
             }
             GitHubSearchClient.RefreshResult.Gone -> gone++
             GitHubSearchClient.RefreshResult.Archived -> archived++
@@ -228,9 +238,29 @@ private suspend fun runBackfill(
         delay(pacePerRepoMs)
     }
     internalLog.info(
-        "Backfill done: ok={} gone={} archived={} no-release={} transient-fail={} (of {})",
-        ok, gone, archived, stale, failed, candidates.size,
+        "Backfill done: ok={} metadata-only={} gone={} archived={} transient-fail={} (of {})",
+        ok, metadataOnly, gone, archived, failed, candidates.size,
     )
+}
+
+// Metadata-only UPDATE for repos without an installable release. Touches
+// just the drift-prone columns (the new ones added by V14/V15 plus
+// stars/forks/description/archived which are also volatile). Leaves
+// release-related columns alone -- they were already correct from the
+// last successful Ok-path refresh, OR they're at schema defaults because
+// no release ever existed (correct outcome either way).
+private fun upsertMetadataOnly(repo: GitHubRepo) {
+    transaction {
+        Repos.update({ Repos.fullName eq repo.fullName }) {
+            it[stars] = repo.stargazersCount
+            it[forks] = repo.forksCount
+            it[openIssues] = repo.openIssuesCount
+            it[licenseSpdxId] = repo.license?.spdxId
+            it[licenseName] = repo.license?.name
+            it[description] = repo.description
+            it[indexedAt] = java.time.OffsetDateTime.now()
+        }
+    }
 }
 
 private suspend fun fetchDbMetrics(): TrainingMetrics = coroutineScope {
