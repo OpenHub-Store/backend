@@ -12,6 +12,7 @@ import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.ingest.RepoRefreshCoordinator
 import zed.rainxch.githubstore.ingest.RepoRefreshWorker
 import zed.rainxch.githubstore.ingest.RetentionWorker
 import zed.rainxch.githubstore.ingest.SignalAggregationWorker
@@ -59,4 +60,11 @@ val appModule = module {
     single { MirrorStatusWorker(registry = get(), supervisor = get()) }
     single { AnnouncementLoader() }
     single { AnnouncementsRegistry(loader = get()) }
+    single {
+        val sc: GitHubSearchClient = get()
+        RepoRefreshCoordinator(
+            refreshUpstream = sc::refreshRepo,
+            persistFn = sc::persist,
+        )
+    }
 }
