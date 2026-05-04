@@ -51,6 +51,8 @@ fun Application.configureRouting() {
                 releasesRoutes(resourceClient)
                 readmeRoutes(resourceClient)
                 userRoutes(resourceClient)
+                userReposRoutes(resourceClient)
+                userStarredRoutes(resourceClient)
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics, workerSupervisor)

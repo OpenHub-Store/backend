@@ -167,12 +167,20 @@ fun Application.configureHTTP() {
             rateLimiter(limit = 3, refillPeriod = 1.minutes)
             requestKey(::forwardedFor)
         }
-        // Search bucket: 60/min/key. Covers /search, /search/explore,
-        // /releases, /readme, /user — every route that fans out to the
-        // GitHub API. Keyed by token-hash when present, IP otherwise (see
-        // searchBucketKey for rationale).
+        // Search bucket: 240/min/key. Covers /search, /search/explore,
+        // /releases, /readme, /user, /users/{u}/repos, /users/{u}/starred --
+        // every route that fans out to the GitHub API. Keyed by token-hash
+        // when present, IP otherwise (see searchBucketKey for rationale).
+        //
+        // Bumped from 60 -> 240 after observing real client burst patterns:
+        // a single details-page open can fan out to /repo + /releases +
+        // /readme + /user, and the developer-profile screen further pulls
+        // /users/{u}/repos + /users/{u}/starred. The aggregate 4-token pool
+        // (~20k/hr to GitHub) and per-route Cloudflare s-maxage absorb the
+        // real upstream load -- backend's own bucket was the constraint, not
+        // GitHub's quota.
         register(RateLimitName("search")) {
-            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+            rateLimiter(limit = 240, refillPeriod = 1.minutes)
             requestKey(::searchBucketKey)
         }
         // Badges: 60/min/IP. Embedded in READMEs so a single popular repo can
