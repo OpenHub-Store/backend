@@ -13,6 +13,7 @@ import zed.rainxch.githubstore.db.SearchRepository
 import zed.rainxch.githubstore.ingest.GitHubDeviceClient
 import zed.rainxch.githubstore.ingest.GitHubResourceClient
 import zed.rainxch.githubstore.ingest.GitHubSearchClient
+import zed.rainxch.githubstore.ingest.RepoRefreshCoordinator
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import zed.rainxch.githubstore.badge.BadgeService
@@ -36,6 +37,7 @@ fun Application.configureRouting() {
     val externalMatchService by inject<ExternalMatchService>()
     val mirrorStatusRegistry by inject<MirrorStatusRegistry>()
     val announcementsRegistry by inject<AnnouncementsRegistry>()
+    val repoRefreshCoordinator by inject<RepoRefreshCoordinator>()
 
     routing {
         route("/v1") {
@@ -53,6 +55,7 @@ fun Application.configureRouting() {
                 userRoutes(resourceClient)
                 userReposRoutes(resourceClient)
                 userStarredRoutes(resourceClient)
+                repoRefreshRoutes(repoRefreshCoordinator, repoRepository)
             }
             authRoutes(deviceClient)
             internalRoutes(searchMetrics, workerSupervisor)

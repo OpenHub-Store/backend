@@ -92,8 +92,10 @@ fun Route.repoRoutes(
 
 // Metadata-only response for lazy-cached repos. Release/installer/download
 // fields take their schema defaults — the client will fill these in from
-// /v1/releases/{owner}/{name} separately.
-private fun GitHubRepo.toMetadataOnlyResponse(): RepoResponse = RepoResponse(
+// /v1/releases/{owner}/{name} separately. `internal` so the refresh route
+// can build the same shape for repos that were fetched but not persisted
+// (no usable release).
+internal fun GitHubRepo.toMetadataOnlyResponse(): RepoResponse = RepoResponse(
     id = id,
     name = name,
     fullName = fullName,
