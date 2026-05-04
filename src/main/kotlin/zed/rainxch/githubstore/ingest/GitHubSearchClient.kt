@@ -521,6 +521,8 @@ class GitHubSearchClient(
                     it[stars] = repo.stargazersCount
                     it[forks] = repo.forksCount
                     it[openIssues] = repo.openIssuesCount
+                    it[licenseSpdxId] = repo.license?.spdxId
+                    it[licenseName] = repo.license?.name
                     it[language] = repo.language
                     it[topics] = repo.topics
                     it[latestReleaseDate] = releaseDate
@@ -557,6 +559,8 @@ class GitHubSearchClient(
                     stars = r.repo.stargazersCount,
                     forks = r.repo.forksCount,
                     open_issues = r.repo.openIssuesCount,
+                    license_spdx_id = r.repo.license?.spdxId,
+                    license_name = r.repo.license?.name,
                     language = r.repo.language,
                     topics = r.repo.topics,
                     latest_release_date = r.release.publishedAt,
@@ -604,6 +608,8 @@ class GitHubSearchClient(
                 stargazersCount = repo.stargazersCount,
                 forksCount = repo.forksCount,
                 openIssuesCount = repo.openIssuesCount,
+                licenseSpdxId = repo.license?.spdxId,
+                licenseName = repo.license?.name,
                 language = repo.language,
                 topics = repo.topics,
                 releasesUrl = "${repo.htmlUrl}/releases",
@@ -660,6 +666,9 @@ data class GitHubRepo(
     // Includes open PRs (GitHub treats PRs as issues). Same number GitHub
     // website's Issues tab shows.
     @SerialName("open_issues_count") val openIssuesCount: Int = 0,
+    // GitHub-detected license. Null on unlicensed repos or when GitHub's
+    // classifier didn't recognise the LICENSE file.
+    val license: GitHubLicense? = null,
     val language: String? = null,
     val topics: List<String> = emptyList(),
     val archived: Boolean = false,
@@ -688,4 +697,12 @@ data class GitHubAsset(
     val name: String,
     val size: Long = 0,
     @SerialName("download_count") val downloadCount: Long = 0,
+)
+
+// GitHub's license object on /repos/{o}/{n}. We persist `spdx_id` + `name`
+// only; the upstream `key`, `url`, and `node_id` aren't surfaced.
+@Serializable
+data class GitHubLicense(
+    @SerialName("spdx_id") val spdxId: String? = null,
+    val name: String? = null,
 )

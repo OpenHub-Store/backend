@@ -76,6 +76,7 @@ object DatabaseFactory {
                 // only for V13 to drop it seconds later.
                 "V13__drop_telemetry_events.sql",
                 "V14__open_issues_count.sql",
+                "V15__license_info.sql",
             )
             for (migration in migrations) {
                 val rawSql = this::class.java.classLoader

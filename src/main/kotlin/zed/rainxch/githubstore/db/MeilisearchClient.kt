@@ -128,6 +128,8 @@ data class MeiliRepoHit(
     val stars: Int = 0,
     val forks: Int = 0,
     val open_issues: Int = 0,
+    val license_spdx_id: String? = null,
+    val license_name: String? = null,
     val language: String? = null,
     val latest_release_date: String? = null,
     val latest_release_tag: String? = null,

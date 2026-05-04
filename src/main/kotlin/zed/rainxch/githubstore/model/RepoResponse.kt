@@ -23,6 +23,12 @@ data class RepoResponse(
     // open PRs (GitHub treats PRs as a kind of issue). Same value as the
     // GitHub website's Issues tab badge.
     val openIssuesCount: Int = 0,
+    // GitHub-detected license. Null when the repo has no LICENSE file or
+    // when GitHub couldn't classify it. spdxId is the short tag for chip
+    // display ("MIT", "GPL-3.0", "Apache-2.0"); name is the human-readable
+    // version ("MIT License").
+    val licenseSpdxId: String? = null,
+    val licenseName: String? = null,
     val language: String?,
     val topics: List<String>,
     val releasesUrl: String?,
