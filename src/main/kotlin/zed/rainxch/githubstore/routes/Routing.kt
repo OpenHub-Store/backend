@@ -58,7 +58,7 @@ fun Application.configureRouting() {
                 repoRefreshRoutes(repoRefreshCoordinator, repoRepository)
             }
             authRoutes(deviceClient)
-            internalRoutes(searchMetrics, workerSupervisor)
+            internalRoutes(searchMetrics, workerSupervisor, githubSearchClient)
             rateLimit(RateLimitName("signing-seeds")) {
                 signingSeedsRoutes(signingFingerprintRepository)
             }
