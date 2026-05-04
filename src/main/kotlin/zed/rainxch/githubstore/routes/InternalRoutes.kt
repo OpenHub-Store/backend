@@ -2,23 +2,51 @@ package zed.rainxch.githubstore.routes
 
 import io.ktor.http.*
 import io.ktor.server.auth.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNull
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.slf4j.LoggerFactory
+import zed.rainxch.githubstore.db.Repos
+import zed.rainxch.githubstore.ingest.GitHubSearchClient
 import zed.rainxch.githubstore.ingest.WorkerSupervisor
 import zed.rainxch.githubstore.metrics.SearchMetricsRegistry
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val BASIC_AUTH_REALM = "github-store-admin"
 const val ADMIN_BASIC_AUTH = "admin-basic"
 
-fun Route.internalRoutes(metrics: SearchMetricsRegistry, workerSupervisor: WorkerSupervisor) {
+private val internalLog = LoggerFactory.getLogger("InternalRoutes")
+
+// Single shared scope for admin-triggered background jobs (currently just
+// the metadata-backfill endpoint). SupervisorJob so one job's failure does
+// not cancel others. IO dispatcher because the work is HTTP + JDBC.
+private val backfillScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+// One backfill at a time. Concurrent re-entry would double-count budget +
+// race upserts. atomic CAS lets the first call claim, returning 409 to
+// concurrent triggers.
+private val backfillRunning = AtomicBoolean(false)
+
+fun Route.internalRoutes(
+    metrics: SearchMetricsRegistry,
+    workerSupervisor: WorkerSupervisor,
+    searchClient: GitHubSearchClient,
+) {
     val adminToken: String? = System.getenv("ADMIN_TOKEN")?.takeIf { it.isNotBlank() }
     val isProduction = System.getenv("APP_ENV") == "production"
 
@@ -74,6 +102,60 @@ fun Route.internalRoutes(metrics: SearchMetricsRegistry, workerSupervisor: Worke
             }
         }
 
+        // One-shot metadata backfill: refresh every curated row whose new
+        // columns (open_issues, license_*) are still at their migration
+        // defaults because no upsert has touched them since V14/V15
+        // landed. Run by an operator after a column-add deploy; no-ops
+        // afterwards since the SQL filter no longer matches.
+        //
+        // Pacing: 500ms per repo (REPO_REFRESH_PACE_MS env honoured for
+        // consistency with RepoRefreshWorker). Quiet-window respected to
+        // keep the rotation pool free for the daily fetcher. Single
+        // concurrent run -- subsequent triggers get 409 until the
+        // current job finishes.
+        post("/backfill-stale") {
+            if (!authorized(call, adminToken)) {
+                return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
+            }
+            val limit = call.request.queryParameters["limit"]
+                ?.toIntOrNull()
+                ?.coerceIn(1, 10_000)
+                ?: 5_000
+            if (!backfillRunning.compareAndSet(false, true)) {
+                call.response.header(HttpHeaders.RetryAfter, "60")
+                return@post call.respond(
+                    HttpStatusCode.Conflict,
+                    mapOf("error" to "backfill_already_running"),
+                )
+            }
+            val candidates = transaction {
+                Repos.selectAll()
+                    .where { Repos.licenseSpdxId.isNull() }
+                    .orderBy(Repos.id)
+                    .limit(limit)
+                    .map { it[Repos.id] to it[Repos.fullName] }
+            }
+            if (candidates.isEmpty()) {
+                backfillRunning.set(false)
+                return@post call.respond(
+                    HttpStatusCode.OK,
+                    mapOf("scheduled" to 0, "message" to "no stale rows"),
+                )
+            }
+            backfillScope.launch {
+                try {
+                    runBackfill(searchClient, candidates)
+                } finally {
+                    backfillRunning.set(false)
+                }
+            }
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(
+                HttpStatusCode.Accepted,
+                mapOf("scheduled" to candidates.size, "started" to true),
+            )
+        }
+
         // Browser dashboard. Basic Auth required in prod so the browser prompts
         // for credentials on first visit; optional in dev for local inspection.
         authenticate(ADMIN_BASIC_AUTH, optional = adminToken == null) {
@@ -106,6 +188,49 @@ private fun authorized(call: io.ktor.server.application.ApplicationCall, adminTo
         )) return true
     val principal = call.principal<UserIdPrincipal>()
     return principal != null
+}
+
+// One-shot backfill loop. Re-uses GitHubSearchClient.refreshRepo + persist
+// (the same path RepoRefreshWorker runs nightly), but drops the curated-row
+// exclusion so we hit the catalog rows the worker leaves alone. Pacing
+// mirrors REPO_REFRESH_PACE_MS so an operator who tuned the worker also
+// tunes this. Quiet window respected -- the rotation pool belongs to the
+// daily fetcher between 1-4 UTC.
+private suspend fun runBackfill(
+    searchClient: GitHubSearchClient,
+    candidates: List<Pair<Long, String>>,
+) {
+    val pacePerRepoMs: Long = (System.getenv("REPO_REFRESH_PACE_MS")?.toLongOrNull() ?: 500L)
+        .coerceAtLeast(0L)
+    var ok = 0
+    var gone = 0
+    var archived = 0
+    var stale = 0
+    var failed = 0
+    for ((_, fullName) in candidates) {
+        // Quiet-window guard: pause the loop, don't burn the candidate.
+        // The daily fetcher's pool stays free; we resume after the window.
+        while (searchClient.isQuietWindowNow()) {
+            delay(60_000)
+        }
+        when (val result = searchClient.refreshRepo(fullName)) {
+            is GitHubSearchClient.RefreshResult.Ok -> {
+                searchClient.persist(result.repo)
+                ok++
+            }
+            is GitHubSearchClient.RefreshResult.NoUsableRelease -> {
+                stale++
+            }
+            GitHubSearchClient.RefreshResult.Gone -> gone++
+            GitHubSearchClient.RefreshResult.Archived -> archived++
+            GitHubSearchClient.RefreshResult.TransientFailure -> failed++
+        }
+        delay(pacePerRepoMs)
+    }
+    internalLog.info(
+        "Backfill done: ok={} gone={} archived={} no-release={} transient-fail={} (of {})",
+        ok, gone, archived, stale, failed, candidates.size,
+    )
 }
 
 private suspend fun fetchDbMetrics(): TrainingMetrics = coroutineScope {
