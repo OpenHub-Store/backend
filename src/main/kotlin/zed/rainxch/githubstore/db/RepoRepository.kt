@@ -19,18 +19,32 @@ class RepoRepository {
     }
 
     suspend fun findByCategory(category: String, platform: String, limit: Int = 50): List<RepoResponse> = newSuspendedTransaction(Dispatchers.IO) {
-        // Primary: dynamic behavioral search_score (updated hourly by
-        // SignalAggregationWorker from clicks / installs / stars / freshness).
-        // Tie-breaker: the static rank the Python fetcher writes once a day,
-        // which preserves the category's semantic flavor (trending stays
-        // velocity-flavored, new-releases stays recency-flavored, etc.) when
-        // two repos have similar behavioral scores.
+        // Primary sort is category-specific: trending velocity for the
+        // trending list, absolute popularity for the popular list, release
+        // recency for new-releases. Without category-specific primary, both
+        // trending and most-popular collapse onto the same global
+        // search_score and return ~99% identical top-N results -- the bug
+        // this query previously had.
+        //
+        // Each category falls back to the global behavioral search_score
+        // when its category-specific column is NULL, then to the static
+        // rank the Python fetcher writes once a day. The fetcher populates
+        // the category-specific scores for repos in that category, so the
+        // fallback is mostly a no-op except for newly-ingested rows that
+        // haven't been reranked yet.
+        val primary: org.jetbrains.exposed.sql.Expression<*> = when (category) {
+            "trending" -> Repos.trendingScore
+            "most-popular" -> Repos.popularityScore
+            "new-releases" -> Repos.latestReleaseDate
+            else -> Repos.searchScore
+        }
         Repos.innerJoin(RepoCategories, { id }, { repoId })
             .selectAll()
             .where {
                 (RepoCategories.category eq category) and (RepoCategories.platform eq platform)
             }
             .orderBy(
+                primary to SortOrder.DESC_NULLS_LAST,
                 Repos.searchScore to SortOrder.DESC_NULLS_LAST,
                 RepoCategories.rank to SortOrder.ASC,
             )
