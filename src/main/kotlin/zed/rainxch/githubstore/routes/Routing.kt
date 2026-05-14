@@ -44,6 +44,9 @@ fun Application.configureRouting() {
             eventRoutes()
             categoryRoutes(repoRepository)
             topicRoutes(repoRepository)
+            // Tombstones for pre-1.6 auth paths under /repo/. Declared before
+            // repoRoutes so the static segments win over /repo/{owner}/{name}.
+            deprecationRoutes()
             repoRoutes(repoRepository, resourceClient)
             rateLimit(RateLimitName("search")) {
                 searchRoutes(meilisearchClient, searchRepository, githubSearchClient, searchMissRepository, searchMetrics)
