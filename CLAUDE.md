@@ -45,6 +45,7 @@ All under `/v1/`:
 
 | Endpoint | Purpose |
 |----------|---------|
+| `GET /` | Greeting JSON `{name, docs, api}` so bare-hostname hits don't 404. Cached `max-age=3600, s-maxage=86400`. |
 | `GET /health` | Health check (Postgres + Meilisearch status) |
 | `GET /search?q=&platform=&sort=&limit=&offset=` | Meilisearch-powered search. Auto-triggers GitHub passthrough if <5 results. `sort` ∈ {`relevance` (default), `stars`, `recent` / `releases` (alias, by latest stable release date), `updated` (by repo `updated_at_gh`)}. `relevance` requires `q`; the others allow empty `q` for browse-mode listings. `sort=updated` is routed directly to Postgres FTS until the fetcher repo's `meili_sync.py` adds `updated_at_gh` to Meili's sortable-attributes. Reads optional `X-GitHub-Token` header to run passthrough on the user's 5000/hr quota instead of the backend's fallback quota. Response carries `passthroughAttempted: Boolean` so clients can distinguish "index was warm but returned nothing" from "GitHub also has nothing". |
 | `GET /search/explore?q=&platform=&page=` | User-triggered deep GitHub search, paginated, ingests into index. Also reads `X-GitHub-Token`. Cold-path latency is 10–30s — clients must use a 30s timeout. |

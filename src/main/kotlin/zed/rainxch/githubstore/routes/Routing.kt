@@ -38,6 +38,7 @@ fun Application.configureRouting() {
     val repoRefreshCoordinator by inject<RepoRefreshCoordinator>()
 
     routing {
+        rootRoutes()
         route("/v1") {
             healthRoutes(meilisearchClient, announcementsRegistry)
             eventRoutes()
