@@ -40,7 +40,7 @@ fun Application.configureSerialization() {
     }
 }
 
-private val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
+internal val REQUEST_ID_KEY = AttributeKey<String>("RequestId")
 private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9\\-]{1,64}$")
 
 // Reject oversized or unknown-size bodies before reading them.
