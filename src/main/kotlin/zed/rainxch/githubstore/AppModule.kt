@@ -80,13 +80,17 @@ val appModule = module {
     // GitHub for the OAuth app, otherwise GitHub rejects with redirect_uri_mismatch.
     single<OAuthEphemeralStore> { PostgresOAuthEphemeralStore() }
     single {
+        // Empty fallbacks are dev-only sentinels — validateProductionEnv
+        // refuses to start prod without OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET /
+        // OAUTH_WEB_CALLBACK_URL set, so the "missing-…" strings never run
+        // through to a real exchange under APP_ENV=production.
         OAuthExchangeService(
             clientId = System.getenv("OAUTH_CLIENT_ID")?.takeIf { it.isNotBlank() }
                 ?: "missing-client-id",
             clientSecret = System.getenv("OAUTH_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
                 ?: "missing-client-secret",
             callbackUrl = System.getenv("OAUTH_WEB_CALLBACK_URL")?.takeIf { it.isNotBlank() }
-                ?: "https://github-store.org/auth/callback",
+                ?: "https://localhost.invalid/missing-callback",
         )
     }
     single {

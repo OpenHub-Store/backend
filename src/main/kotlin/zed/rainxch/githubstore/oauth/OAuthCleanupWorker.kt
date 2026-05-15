@@ -30,18 +30,32 @@ class OAuthCleanupWorker(
         // migrations finish, etc.
         delay(30_000L)
         while (true) {
-            try {
-                val reaped = store.reapExpired()
-                if (reaped > 0) {
-                    log.info("OAuth cleanup reaped {} expired rows", reaped)
+            if (cleanupDisabled()) {
+                log.info("OAuth cleanup: OAUTH_CLEANUP_DISABLED=true, sleeping cycle")
+            } else {
+                try {
+                    val reaped = store.reapExpired()
+                    if (reaped > 0) {
+                        log.info("OAuth cleanup reaped {} expired rows", reaped)
+                    }
+                    supervisor?.recordTick(WORKER_NAME)
+                } catch (e: Exception) {
+                    log.error("OAuth cleanup cycle failed", e)
                 }
-                supervisor?.recordTick(WORKER_NAME)
-            } catch (e: Exception) {
-                log.error("OAuth cleanup cycle failed", e)
             }
             delay(cycleInterval)
         }
     }.also { supervisor?.register(WORKER_NAME, it) }
+
+    // Per-iteration kill switch. Lets the operator stop the DELETE-on-hot-row
+    // loop without restarting the app if it ever starts contending with
+    // /exchange or /handoff under load. Request-time `expires_at > NOW()`
+    // filters keep correctness intact while the worker sleeps — the only
+    // cost is unbounded table growth, which the operator can clear manually
+    // via `DELETE FROM oauth_ephemeral WHERE expires_at < NOW();` before
+    // re-enabling.
+    private fun cleanupDisabled(): Boolean =
+        System.getenv("OAUTH_CLEANUP_DISABLED")?.equals("true", ignoreCase = true) == true
 
     private companion object {
         const val WORKER_NAME = "oauth_cleanup"

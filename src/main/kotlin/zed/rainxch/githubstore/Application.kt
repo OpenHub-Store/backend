@@ -145,9 +145,18 @@ private fun validateProductionEnv() {
         // the backend needs the secret.
         "OAUTH_CLIENT_SECRET",
         // Shared secret on /v1/oauth/state and /v1/oauth/exchange. Missing
-        // env makes both endpoints return 503 oauth_not_configured on
+        // env makes both endpoints return 401 service_auth_required on
         // every request — useless service.
         "OAUTH_SERVICE_TOKEN",
+        // Host allowlist for the S2S OAuth endpoints. Required in production
+        // alongside OAUTH_SERVICE_TOKEN — empty in prod means every S2S call
+        // gets 401, which is a silent failure mode validateProductionEnv
+        // exists to prevent.
+        "OAUTH_SERVICE_ALLOWED_HOSTS",
+        // GitHub OAuth redirect_uri. Must EXACTLY match the value registered
+        // with the OAuth App or every exchange call fails with
+        // redirect_uri_mismatch — same fail-fast rationale as the others.
+        "OAUTH_WEB_CALLBACK_URL",
         // Pepper for SHA-256 hashing of device IDs before they hit Postgres.
         // Required in prod so a stolen DB dump can't be brute-forced into a
         // device-ID lookup table without also stealing the env.
