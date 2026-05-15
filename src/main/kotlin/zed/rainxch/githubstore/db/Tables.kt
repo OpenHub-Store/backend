@@ -121,3 +121,12 @@ object RepoSignals : Table("repo_signals") {
 
     override val primaryKey = PrimaryKey(repoId)
 }
+
+object OAuthEphemeral : Table("oauth_ephemeral") {
+    val namespace = varchar("namespace", 16)
+    val key = varchar("key", 128)
+    val value = text("value")
+    val expiresAt = timestampWithTimeZone("expires_at")
+
+    override val primaryKey = PrimaryKey(namespace, key)
+}
