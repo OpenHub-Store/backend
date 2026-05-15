@@ -79,11 +79,33 @@ services:
       # Quiet-window UTC hours. Change if the fetcher schedule moves.
       TOKEN_QUIET_START_UTC: "1"
       TOKEN_QUIET_END_UTC: "4"
-      # OAuth App client_id for the /v1/auth/device/* proxy. Same value the
-      # KMP client has in BuildKonfig — both paths of the primary→fallback
-      # flow must use the same OAuth App so device_codes are interchangeable.
-      # Required; the backend refuses to start without it.
-      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID}
+      # OAuth App client_id, used by both /v1/auth/device/* and the
+      # /v1/oauth/* web flow. Same value the KMP client has in BuildKonfig —
+      # device-flow needs identical client_id at both ends so codes can move
+      # between primary and fallback paths. Renamed from GITHUB_OAUTH_CLIENT_ID
+      # alongside the web-flow rollout; old env name is no longer read.
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      # OAuth App client_secret. Only the backend ever sees this — never the
+      # client app, never the website. Required for /v1/oauth/exchange to
+      # call GitHub's token endpoint.
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
+      # Shared secret with the website (github-store.org). Same value goes
+      # to Cloudflare Worker via `wrangler secret put OAUTH_SERVICE_TOKEN`.
+      # Mismatches → 401 service_auth_required on /v1/oauth/state and
+      # /v1/oauth/exchange.
+      OAUTH_SERVICE_TOKEN: ${OAUTH_SERVICE_TOKEN}
+      # Host header allowlist for the two S2S OAuth endpoints. Defence in
+      # depth on top of the shared secret. Empty in prod = every S2S call
+      # rejected, so the app refuses to start without it.
+      OAUTH_SERVICE_ALLOWED_HOSTS: ${OAUTH_SERVICE_ALLOWED_HOSTS}
+      # GitHub OAuth App "Authorization callback URL". Must EXACTLY match
+      # what's registered at github.com/settings/applications/<app-id> or
+      # GitHub rejects /v1/oauth/exchange with redirect_uri_mismatch.
+      OAUTH_WEB_CALLBACK_URL: ${OAUTH_WEB_CALLBACK_URL}
+      # Optional per-iteration kill switch for the cleanup worker. Empty in
+      # .env means "run normally"; set to "true" to pause expired-row reaping
+      # if it ever contends with /exchange or /handoff under load.
+      OAUTH_CLEANUP_DISABLED: ${OAUTH_CLEANUP_DISABLED:-}
       # Explicit environment marker. Internal routes (/v1/internal/*) refuse to
       # register if ADMIN_TOKEN is unset under APP_ENV=production — no
       # accidentally-open dashboard after a bad deploy.
