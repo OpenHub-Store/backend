@@ -107,7 +107,14 @@ private fun searchBucketKey(call: io.ktor.server.application.ApplicationCall): S
 // scanners and broken clients can't pin origin, and returns the same JSON
 // shape every other 4xx uses. Path is bracketed so `grep '\[404 ...]'` finds
 // only 404 lines on a noisy log.
-private suspend fun respondNotFound(call: io.ktor.server.application.ApplicationCall) {
+//
+// Called by:
+//   - The global `status(NotFound)` StatusPages handler (unmatched routes
+//     and any route-level 404 — Ktor 3's StatusPages overrides route-level
+//     bodies, see StatusPagesOverrideTest).
+//   - Routes that want the same body shape + caching + log without going
+//     through StatusPages (`InternalRoutes`).
+internal suspend fun respondNotFound(call: io.ktor.server.application.ApplicationCall) {
     val rid = call.attributes.getOrNull(REQUEST_ID_KEY)
     val method = call.request.httpMethod.value
     val path = call.request.path()
