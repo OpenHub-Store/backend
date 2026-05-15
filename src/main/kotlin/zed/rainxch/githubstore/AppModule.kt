@@ -81,9 +81,9 @@ val appModule = module {
     single<OAuthEphemeralStore> { PostgresOAuthEphemeralStore() }
     single {
         OAuthExchangeService(
-            clientId = System.getenv("GITHUB_OAUTH_CLIENT_ID")?.takeIf { it.isNotBlank() }
+            clientId = System.getenv("OAUTH_CLIENT_ID")?.takeIf { it.isNotBlank() }
                 ?: "missing-client-id",
-            clientSecret = System.getenv("GITHUB_OAUTH_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
+            clientSecret = System.getenv("OAUTH_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
                 ?: "missing-client-secret",
             callbackUrl = System.getenv("OAUTH_WEB_CALLBACK_URL")?.takeIf { it.isNotBlank() }
                 ?: "https://github-store.org/auth/callback",
