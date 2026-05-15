@@ -36,6 +36,7 @@ fun main() {
                     event.request?.headers?.let { headers ->
                         listOf(
                             "Authorization", "X-GitHub-Token", "X-Admin-Token",
+                            "X-Oauth-Service-Token",
                             "Cookie", "Set-Cookie", "X-Forwarded-For",
                             "CF-Connecting-IP",
                         ).forEach { headers.remove(it) }

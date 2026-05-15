@@ -38,6 +38,26 @@ private val BASE64URL_43 = Regex("^[A-Za-z0-9_-]{43}$")
 private val BASE64URL_43_TO_128 = Regex("^[A-Za-z0-9_-]{43,128}$")
 private const val CODE_MAX_LEN = 200
 
+// Whitelist of GitHub OAuth error codes we echo verbatim in the response
+// body and log. Anything outside this set is normalised to `unknown` so
+// future GitHub changes (or a man-in-the-middle injecting odd values) can't
+// reach our API consumers or structured logs unchecked. List sourced from
+// GitHub's documented OAuth error responses on /login/oauth/access_token.
+private val GITHUB_ERROR_WHITELIST = setOf(
+    "authorization_pending",
+    "slow_down",
+    "expired_token",
+    "unsupported_grant_type",
+    "incorrect_client_credentials",
+    "incorrect_device_code",
+    "access_denied",
+    "device_flow_disabled",
+    "redirect_uri_mismatch",
+    "bad_verification_code",
+    "unverified_user_email",
+    "application_suspended",
+)
+
 private val parseJson = Json { ignoreUnknownKeys = true; isLenient = true }
 private val urlBase64 = Base64.getUrlEncoder().withoutPadding()
 private val secureRandom = SecureRandom()
@@ -72,167 +92,181 @@ fun Route.oauthRoutes(
         // GitHub. The app generated the verifier; the website forwards only
         // the challenge (= SHA256(verifier)). 60s TTL.
         rateLimit(RateLimitName("oauth-state")) {
-        post("/state") {
-            if (!serviceAuth.authorize(call)) return@post
-            if (!call.requireMaxBody(STATE_BODY_MAX)) return@post
+            post("/state") {
+                if (!serviceAuth.authorize(call)) return@post
+                if (!call.requireMaxBody(STATE_BODY_MAX)) return@post
 
-            val req = try {
-                call.receive<StateRequest>()
-            } catch (_: Exception) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body"))
-            }
+                val req = try {
+                    call.receive<StateRequest>()
+                } catch (_: Exception) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body"))
+                }
 
-            if (!BASE64URL_43.matches(req.state)) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_state"))
-            }
-            if (!BASE64URL_43.matches(req.code_challenge)) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code_challenge"))
-            }
+                if (!BASE64URL_43.matches(req.state)) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_state"))
+                }
+                if (!BASE64URL_43.matches(req.code_challenge)) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code_challenge"))
+                }
 
-            val stored = StoredState(
-                code_challenge = req.code_challenge,
-                created_at_ms = System.currentTimeMillis(),
-            )
-            val ok = store.setEx(
-                namespace = NAMESPACE_STATE,
-                key = req.state,
-                value = parseJson.encodeToString(StoredState.serializer(), stored),
-                ttl = TTL,
-            )
-            if (!ok) {
-                // Duplicate state on the wire is either a buggy retry or a
-                // replay — refuse. The legitimate flow always uses a fresh
-                // random state per attempt.
-                log.info(
-                    "[oauth-state] state={} duplicate",
-                    req.state.take(8),
+                val stored = StoredState(
+                    code_challenge = req.code_challenge,
+                    created_at_ms = System.currentTimeMillis(),
                 )
-                return@post call.respond(HttpStatusCode.Conflict, ApiError("state_already_registered"))
-            }
+                val ok = store.setEx(
+                    namespace = NAMESPACE_STATE,
+                    key = req.state,
+                    value = parseJson.encodeToString(StoredState.serializer(), stored),
+                    ttl = TTL,
+                )
+                if (!ok) {
+                    // Duplicate state on the wire is either a buggy retry or a
+                    // replay — refuse. The legitimate flow always uses a fresh
+                    // random state per attempt.
+                    log.info("[oauth-state] state={} duplicate", req.state.take(8))
+                    return@post call.respond(HttpStatusCode.Conflict, ApiError("state_already_registered"))
+                }
 
-            log.info("[oauth-state] state={} ok", req.state.take(8))
-            call.respond(HttpStatusCode.NoContent)
-        }
+                log.info("[oauth-state] state={} ok", req.state.take(8))
+                call.respond(HttpStatusCode.NoContent)
+            }
         }
 
         // ---- POST /v1/oauth/exchange ----
         // Website calls this from its /auth/callback handler. The request
         // contains GitHub's `code`, the `state` the app generated, and the
         // PKCE `code_verifier` the app posted to the website earlier in the
-        // flow. The backend verifies SHA256(verifier) == stored challenge,
-        // hits GitHub for the token, and mints a one-shot handoff_id.
+        // flow. The backend atomically consumes the state row (getDel —
+        // closes any get-then-del race between two concurrent /exchange
+        // requests with the same state) and only then verifies PKCE +
+        // forwards to GitHub.
+        //
+        // State is ALWAYS burned by the getDel at the top, even on PKCE
+        // mismatch, GitHub error, or upstream failure. GitHub's `code` is
+        // single-use upstream — there's no legitimate retry of the same
+        // (state, code) pair, so refusing the second attempt with
+        // state_missing_or_expired is the correct behaviour for every
+        // failure mode.
         rateLimit(RateLimitName("oauth-exchange")) {
-        post("/exchange") {
-            if (!serviceAuth.authorize(call)) return@post
-            if (!call.requireMaxBody(EXCHANGE_BODY_MAX)) return@post
+            post("/exchange") {
+                if (!serviceAuth.authorize(call)) return@post
+                if (!call.requireMaxBody(EXCHANGE_BODY_MAX)) return@post
 
-            val req = try {
-                call.receive<ExchangeRequest>()
-            } catch (_: Exception) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body"))
-            }
+                val req = try {
+                    call.receive<ExchangeRequest>()
+                } catch (_: Exception) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body"))
+                }
 
-            if (req.code.isBlank() || req.code.length > CODE_MAX_LEN) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code"))
-            }
-            if (!BASE64URL_43.matches(req.state)) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_state"))
-            }
-            if (!BASE64URL_43_TO_128.matches(req.code_verifier)) {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code_verifier"))
-            }
-            val statePrefix = req.state.take(8)
+                if (req.code.isBlank() || req.code.length > CODE_MAX_LEN) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code"))
+                }
+                if (!BASE64URL_43.matches(req.state)) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_state"))
+                }
+                if (!BASE64URL_43_TO_128.matches(req.code_verifier)) {
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("invalid_code_verifier"))
+                }
+                val statePrefix = req.state.take(8)
 
-            val storedRaw = store.get(NAMESPACE_STATE, req.state) ?: run {
-                log.info("[oauth-exchange] state={} error=state_missing_or_expired", statePrefix)
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("state_missing_or_expired"))
-            }
-            val stored = try {
-                parseJson.decodeFromString(StoredState.serializer(), storedRaw)
-            } catch (_: Exception) {
-                log.error("[oauth-exchange] state={} error=stored_state_unreadable", statePrefix)
-                store.del(NAMESPACE_STATE, req.state)
-                return@post call.respond(HttpStatusCode.InternalServerError, ApiError("internal_error"))
-            }
+                // Atomic consume — single round-trip, single Postgres row lock.
+                // If two requests race with the same state, exactly one gets
+                // the row back, the other gets null and 400s.
+                val storedRaw = store.getDel(NAMESPACE_STATE, req.state) ?: run {
+                    log.info("[oauth-exchange] state={} error=state_missing_or_expired", statePrefix)
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("state_missing_or_expired"))
+                }
+                val stored = try {
+                    parseJson.decodeFromString(StoredState.serializer(), storedRaw)
+                } catch (_: Exception) {
+                    log.error("[oauth-exchange] state={} error=stored_state_unreadable", statePrefix)
+                    return@post call.respond(HttpStatusCode.InternalServerError, ApiError("internal_error"))
+                }
 
-            val verifierChallenge = pkceChallenge(req.code_verifier)
-            if (!constantTimeEquals(verifierChallenge, stored.code_challenge)) {
-                log.info("[oauth-exchange] state={} error=pkce_mismatch", statePrefix)
-                store.del(NAMESPACE_STATE, req.state)
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("pkce_mismatch"))
-            }
+                val verifierChallenge = pkceChallenge(req.code_verifier)
+                if (!constantTimeEquals(verifierChallenge, stored.code_challenge)) {
+                    log.info("[oauth-exchange] state={} error=pkce_mismatch", statePrefix)
+                    return@post call.respond(HttpStatusCode.BadRequest, ApiError("pkce_mismatch"))
+                }
 
-            when (val result = exchangeService.exchange(req.code)) {
-                is OAuthExchangeService.Result.Success -> {
-                    val handoffId = randomBase64Url(32)
-                    val ok = store.setEx(
-                        namespace = NAMESPACE_HANDOFF,
-                        key = handoffId,
-                        value = result.accessToken,
-                        ttl = TTL,
-                    )
-                    if (!ok) {
-                        // Re-roll once; with 32 random bytes a collision is
-                        // astronomically unlikely but a defensive retry costs
-                        // nothing.
-                        val retryId = randomBase64Url(32)
-                        val retryOk = store.setEx(NAMESPACE_HANDOFF, retryId, result.accessToken, TTL)
-                        if (!retryOk) {
-                            log.error("[oauth-exchange] state={} error=handoff_collision_twice", statePrefix)
-                            return@post call.respond(HttpStatusCode.InternalServerError, ApiError("internal_error"))
+                when (val result = exchangeService.exchange(req.code)) {
+                    is OAuthExchangeService.Result.Success -> {
+                        val handoffId = randomBase64Url(32)
+                        val ok = store.setEx(
+                            namespace = NAMESPACE_HANDOFF,
+                            key = handoffId,
+                            value = result.accessToken,
+                            ttl = TTL,
+                        )
+                        if (!ok) {
+                            // Re-roll once; with 32 random bytes a collision is
+                            // astronomically unlikely but a defensive retry costs
+                            // nothing.
+                            val retryId = randomBase64Url(32)
+                            val retryOk = store.setEx(NAMESPACE_HANDOFF, retryId, result.accessToken, TTL)
+                            if (!retryOk) {
+                                log.error("[oauth-exchange] state={} error=handoff_collision_twice", statePrefix)
+                                return@post call.respond(HttpStatusCode.InternalServerError, ApiError("internal_error"))
+                            }
+                            log.info("[oauth-exchange] state={} ok", statePrefix)
+                            return@post call.respond(ExchangeResponse(retryId))
                         }
-                        store.del(NAMESPACE_STATE, req.state)
                         log.info("[oauth-exchange] state={} ok", statePrefix)
-                        return@post call.respond(ExchangeResponse(retryId))
+                        call.respond(ExchangeResponse(handoffId))
                     }
-                    store.del(NAMESPACE_STATE, req.state)
-                    log.info("[oauth-exchange] state={} ok", statePrefix)
-                    call.respond(ExchangeResponse(handoffId))
-                }
 
-                is OAuthExchangeService.Result.UpstreamError -> {
-                    log.info("[oauth-exchange] state={} error=github_{}", statePrefix, result.errorCode)
-                    store.del(NAMESPACE_STATE, req.state)
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        ApiError("github_${result.errorCode}", "GitHub rejected the authorization code"),
-                    )
-                }
+                    is OAuthExchangeService.Result.UpstreamError -> {
+                        val safeCode = if (result.errorCode in GITHUB_ERROR_WHITELIST) {
+                            result.errorCode
+                        } else {
+                            "unknown"
+                        }
+                        log.info("[oauth-exchange] state={} error=github_{}", statePrefix, safeCode)
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            ApiError("github_$safeCode", "GitHub rejected the authorization code"),
+                        )
+                    }
 
-                OAuthExchangeService.Result.UpstreamFailure -> {
-                    log.warn("[oauth-exchange] state={} error=github_unreachable", statePrefix)
-                    // Don't burn the state on a transient upstream failure —
-                    // the website may retry within the 60s window.
-                    call.respond(HttpStatusCode.BadGateway, ApiError("github_unreachable"))
+                    OAuthExchangeService.Result.UpstreamFailure -> {
+                        log.warn("[oauth-exchange] state={} error=github_unreachable", statePrefix)
+                        // State was consumed by getDel above. A retry can't use
+                        // the same (state, code) pair anyway — GitHub's code is
+                        // single-use. The website must restart the flow with a
+                        // fresh state if it wants to retry.
+                        call.respond(HttpStatusCode.BadGateway, ApiError("github_unreachable"))
+                    }
                 }
             }
-        }
         }
 
         // ---- POST /v1/oauth/handoff/{id} ----
         // App calls this with the handoff_id it received via deep link from
         // the website. Single-use: GETDEL semantics mean a second call always
-        // returns 404. Public — no S2S auth.
+        // returns 404. Public — no S2S auth. `Cache-Control: no-store` set on
+        // every response (including 404) so no middlebox or buggy CDN can
+        // cache the answer for a handoff_id that became valid between scans.
         rateLimit(RateLimitName("oauth-handoff")) {
-        post("/handoff/{id}") {
-            val rawId = call.parameters["id"].orEmpty()
-            if (!BASE64URL_43.matches(rawId)) {
-                return@post call.respond(HttpStatusCode.NotFound, ApiError("handoff_not_found"))
-            }
+            post("/handoff/{id}") {
+                call.response.header(HttpHeaders.CacheControl, "no-store")
 
-            val token = store.getDel(NAMESPACE_HANDOFF, rawId)
-            if (token == null) {
-                log.info("[oauth-handoff] id={} miss", rawId.take(8))
-                return@post call.respond(HttpStatusCode.NotFound, ApiError("handoff_not_found"))
-            }
+                val rawId = call.parameters["id"].orEmpty()
+                if (!BASE64URL_43.matches(rawId)) {
+                    return@post call.respond(HttpStatusCode.NotFound, ApiError("handoff_not_found"))
+                }
 
-            log.info("[oauth-handoff] id={} ok", rawId.take(8))
-            // Token returned to the app over the same HTTPS channel that
-            // every other endpoint uses. The app stores it locally and we
-            // never see it again on the backend.
-            call.response.header(HttpHeaders.CacheControl, "no-store")
-            call.respond(HandoffResponse(token))
-        }
+                val token = store.getDel(NAMESPACE_HANDOFF, rawId)
+                if (token == null) {
+                    log.info("[oauth-handoff] id={} miss", rawId.take(8))
+                    return@post call.respond(HttpStatusCode.NotFound, ApiError("handoff_not_found"))
+                }
+
+                log.info("[oauth-handoff] id={} ok", rawId.take(8))
+                // Token returned to the app over the same HTTPS channel that
+                // every other endpoint uses. The app stores it locally and we
+                // never see it again on the backend.
+                call.respond(HandoffResponse(token))
+            }
         }
     }
 }
@@ -248,9 +282,12 @@ private fun randomBase64Url(byteCount: Int): String {
     return urlBase64.encodeToString(bytes)
 }
 
-private fun constantTimeEquals(a: String, b: String): Boolean {
-    if (a.length != b.length) return false
-    var diff = 0
-    for (i in a.indices) diff = diff or (a[i].code xor b[i].code)
-    return diff == 0
-}
+// MessageDigest.isEqual is constant-time on length AND content since Java
+// 6u17 — both buffers are read fully even on mismatch. Replaces the earlier
+// hand-rolled length-prefix + XOR-or-accumulate, which leaked secret length
+// via the early-return on the length check.
+private fun constantTimeEquals(a: String, b: String): Boolean =
+    MessageDigest.isEqual(
+        a.toByteArray(Charsets.UTF_8),
+        b.toByteArray(Charsets.UTF_8),
+    )

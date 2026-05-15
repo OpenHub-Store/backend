@@ -187,7 +187,9 @@ class OAuthRoutesTest {
     }
 
     @Test
-    fun `state with wrong host returns 401`() = testApplication {
+    fun `state with wrong host returns 401 indistinguishable from wrong-secret`() = testApplication {
+        // Same body for wrong-secret and wrong-host so a prober can't
+        // determine which check failed.
         val store = InMemoryOAuthEphemeralStore()
         setupApp(store, FakeExchangeService(FakeExchangeService.Behaviour.UpstreamFailure))
 
@@ -198,7 +200,8 @@ class OAuthRoutesTest {
             setBody("""{"state":"${random43()}","code_challenge":"${random43()}"}""")
         }
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
-        assertTrue(resp.bodyAsText().contains("host_not_allowed"))
+        assertTrue(resp.bodyAsText().contains("service_auth_required"))
+        assertFalse(resp.bodyAsText().contains("host_not_allowed"))
     }
 
     @Test
@@ -216,7 +219,10 @@ class OAuthRoutesTest {
     }
 
     @Test
-    fun `oauth not configured returns 503`() = testApplication {
+    fun `oauth not configured returns 401 indistinguishable from wrong-secret`() = testApplication {
+        // Misconfiguration (missing token) and "wrong secret" must look
+        // identical to an anonymous prober — otherwise the response code +
+        // body fingerprint the deploy state.
         val store = InMemoryOAuthEphemeralStore()
         setupApp(
             store,
@@ -229,8 +235,9 @@ class OAuthRoutesTest {
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             setBody("""{"state":"${random43()}","code_challenge":"${random43()}"}""")
         }
-        assertEquals(HttpStatusCode.ServiceUnavailable, resp.status)
-        assertTrue(resp.bodyAsText().contains("oauth_not_configured"))
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+        assertTrue(resp.bodyAsText().contains("service_auth_required"))
+        assertFalse(resp.bodyAsText().contains("oauth_not_configured"))
     }
 
     // ---------- /exchange ----------
@@ -310,6 +317,35 @@ class OAuthRoutesTest {
     }
 
     @Test
+    fun `exchange with unknown GitHub error code normalises to github_unknown`() = testApplication {
+        // F6 — anything outside the whitelist must not propagate verbatim.
+        val store = InMemoryOAuthEphemeralStore()
+        setupApp(
+            store,
+            FakeExchangeService(FakeExchangeService.Behaviour.UpstreamError("weird_thing_we_dont_know_about")),
+        )
+
+        val state = random43()
+        val verifier = random43()
+        store.setEx(
+            OAuthEphemeralStore.NAMESPACE_STATE,
+            state,
+            """{"code_challenge":"${challengeOf(verifier)}","created_at_ms":0}""",
+            java.time.Duration.ofSeconds(60),
+        )
+
+        val resp = client.post("/v1/oauth/exchange") {
+            serviceHeaders()
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"code":"x","state":"$state","code_verifier":"$verifier"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
+        val body = resp.bodyAsText()
+        assertTrue(body.contains("github_unknown"), "should normalise: $body")
+        assertFalse(body.contains("weird_thing_we_dont_know_about"), "unsanitised: $body")
+    }
+
+    @Test
     fun `exchange with GitHub error bubbles up as github_xxx`() = testApplication {
         val store = InMemoryOAuthEphemeralStore()
         setupApp(store, FakeExchangeService(FakeExchangeService.Behaviour.UpstreamError("bad_verification_code")))
@@ -333,7 +369,11 @@ class OAuthRoutesTest {
     }
 
     @Test
-    fun `exchange with upstream failure returns 502 and preserves state for retry`() = testApplication {
+    fun `exchange with upstream failure returns 502 and state is consumed at top by getDel`() = testApplication {
+        // After the F1+F4 fix, state is always consumed atomically at the
+        // top of /exchange via getDel. GitHub's authorization `code` is
+        // single-use upstream, so a retry of the same (state, code) pair is
+        // never legitimate — the website must start a fresh flow.
         val store = InMemoryOAuthEphemeralStore()
         setupApp(store, FakeExchangeService(FakeExchangeService.Behaviour.UpstreamFailure))
 
@@ -352,8 +392,41 @@ class OAuthRoutesTest {
             setBody("""{"code":"x","state":"$state","code_verifier":"$verifier"}""")
         }
         assertEquals(HttpStatusCode.BadGateway, resp.status)
-        // State NOT burned — transient upstream failures should let the website retry.
-        assertNotNull(store.get(OAuthEphemeralStore.NAMESPACE_STATE, state))
+        assertNull(store.get(OAuthEphemeralStore.NAMESPACE_STATE, state))
+    }
+
+    @Test
+    fun `exchange with concurrent same-state requests - only one wins`() = testApplication {
+        // Race verification for the getDel atomicity fix. Two requests with
+        // identical (state, code_verifier) — exactly one should reach the
+        // GitHub call and succeed; the other must get state_missing_or_expired.
+        val store = InMemoryOAuthEphemeralStore()
+        val exchange = FakeExchangeService(FakeExchangeService.Behaviour.Success("token-once"))
+        setupApp(store, exchange)
+
+        val state = random43()
+        val verifier = random43()
+        store.setEx(
+            OAuthEphemeralStore.NAMESPACE_STATE,
+            state,
+            """{"code_challenge":"${challengeOf(verifier)}","created_at_ms":0}""",
+            java.time.Duration.ofSeconds(60),
+        )
+
+        suspend fun call(): HttpStatusCode = client.post("/v1/oauth/exchange") {
+            serviceHeaders()
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"code":"x","state":"$state","code_verifier":"$verifier"}""")
+        }.status
+
+        val first = call()
+        val second = call()
+        // One success, one state_missing — order independent.
+        assertTrue(
+            (first == HttpStatusCode.OK && second == HttpStatusCode.BadRequest) ||
+                (first == HttpStatusCode.BadRequest && second == HttpStatusCode.OK),
+            "expected one OK and one BadRequest, got $first and $second",
+        )
     }
 
     // ---------- /handoff/{id} ----------
@@ -387,6 +460,23 @@ class OAuthRoutesTest {
 
         val resp = client.post("/v1/oauth/handoff/not-a-real-id")
         assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
+
+    @Test
+    fun `handoff 404 path also sets Cache-Control no-store`() = testApplication {
+        // F9 — every response from /handoff must be no-store, including 404,
+        // so a middlebox can't cache the "miss" for an id that might land
+        // valid moments later.
+        val store = InMemoryOAuthEphemeralStore()
+        setupApp(store, FakeExchangeService(FakeExchangeService.Behaviour.UpstreamFailure))
+
+        val miss = client.post("/v1/oauth/handoff/${random43()}")
+        assertEquals(HttpStatusCode.NotFound, miss.status)
+        assertEquals("no-store", miss.headers[HttpHeaders.CacheControl])
+
+        val malformed = client.post("/v1/oauth/handoff/short")
+        assertEquals(HttpStatusCode.NotFound, malformed.status)
+        assertEquals("no-store", malformed.headers[HttpHeaders.CacheControl])
     }
 
     // ---------- privacy ----------
